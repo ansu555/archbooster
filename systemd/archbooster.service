@@ -1,0 +1,13 @@
+[Unit]
+Description=ArchBooster background update checker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/archbooster --daemon
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "archbooster"
+version         = "0.1.0"
+description     = "Driver Booster-style selective update manager for Arch Linux"
+requires-python = ">=3.11"
+dependencies    = ["textual>=0.50.0"]
+
+[project.scripts]
+archbooster = "archbooster.main:main"
+
+[tool.setuptools]
+packages = ["archbooster", "archbooster.core", "archbooster.screens", "archbooster.widgets"]

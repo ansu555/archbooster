@@ -1,0 +1,2 @@
+[console_scripts]
+archbooster = archbooster.main:main
