@@ -5,6 +5,7 @@ Compatible with Textual 0.50+
 from __future__ import annotations
 import asyncio
 import re
+from collections.abc import AsyncIterator, Callable, Iterator
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,7 +14,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
 
 from archbooster.core.scanner import Package
-from archbooster.core.updater import Updater
+from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.history import History
 from archbooster.core.config import load_config
 from archbooster.core.sudo_auth import authenticate, is_sudo_cached
@@ -37,6 +38,41 @@ def safe_log(log: RichLog, line: str, color: str | None = None) -> None:
         log.write(f"[{color}]{clean}[/{color}]")
     else:
         log.write(clean)
+
+
+async def stream_lines(
+    gen_factory: Callable[[], Iterator[str]],
+) -> AsyncIterator[str]:
+    """Run a blocking line-generator in a thread, yielding each line as it
+    arrives — so the TUI shows update output live instead of all at once after
+    the command finishes.
+
+    `gen_factory` is a zero-arg callable returning the blocking iterator (e.g.
+    ``lambda: backend.update(["firefox"])`` or a bound ``registry.full_upgrade``).
+    Any exception raised while iterating is re-raised on the async side so the
+    caller's error handling still applies.
+    """
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    done = object()
+
+    def _pump() -> None:
+        try:
+            for line in gen_factory():
+                loop.call_soon_threadsafe(queue.put_nowait, line)
+        except Exception as exc:  # surfaced to the async side below
+            loop.call_soon_threadsafe(queue.put_nowait, exc)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, done)
+
+    loop.run_in_executor(None, _pump)
+    while True:
+        item = await queue.get()
+        if item is done:
+            break
+        if isinstance(item, BaseException):
+            raise item
+        yield item
 
 
 class PackageStatusRow(Static):
@@ -141,8 +177,8 @@ class ProgressScreen(Screen):
         self.run_worker(self._run_updates(), exclusive=True)
 
     async def _run_updates(self) -> None:
-        log     = self.query_one("#live-log", RichLog)
-        updater = Updater(confirm=load_config().confirm)
+        log      = self.query_one("#live-log", RichLog)
+        registry = BackendRegistry(confirm=load_config().confirm)
 
         # Pre-flight: ensure sudo is cached so yay/pacman can run without TTY
         cached = await asyncio.get_event_loop().run_in_executor(None, is_sudo_cached)
@@ -154,43 +190,57 @@ class ProgressScreen(Screen):
             prompt.remove_class("visible")
 
         if self._full_upgrade:
-            await self._run_full_upgrade(log, updater)
+            await self._run_full_upgrade(log, registry)
         else:
-            await self._run_selective(log, updater)
+            await self._run_selective(log, registry)
 
         self._finish()
 
-    async def _run_selective(self, log: RichLog, updater: Updater) -> None:
+    def _write_line(self, log: RichLog, line: str) -> bool:
+        """Write one output line to the log with severity colouring.
+
+        Returns True if the line signals an error, so the caller can mark the
+        package failed.
+        """
+        line = line.rstrip()
+        if not line:
+            return False
+        low = line.lower()
+        if "error:" in low or line.startswith("error"):
+            safe_log(log, line, "red")
+            return True
+        if "warning:" in low or line.startswith("warning"):
+            safe_log(log, line, "yellow")
+        elif line.startswith("::") or line.startswith("==>"):
+            safe_log(log, line, "cyan")
+        elif "[archbooster] Done" in line:
+            safe_log(log, line, "green")
+        else:
+            safe_log(log, line)
+        return False
+
+    async def _run_selective(self, log: RichLog, registry: BackendRegistry) -> None:
         for pkg in self._packages:
             self._set_pkg_status(pkg.name, STATUS_RUNNING)
             # Section header — safe markup, no user content
             log.write(f"\n[bold cyan]── {pkg.name} ──────────────────[/bold cyan]")
 
+            backend = registry.backend_for(pkg)
             success = True
-            try:
-                lines = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda p=pkg: list(updater.run([p.name]))
-                )
-                for line in lines:
-                    line = line.rstrip()
-                    if not line:
-                        continue
-                    low = line.lower()
-                    if "error:" in low or line.startswith("error"):
-                        safe_log(log, line, "red")
-                        success = False
-                    elif "warning:" in low or line.startswith("warning"):
-                        safe_log(log, line, "yellow")
-                    elif line.startswith("::") or line.startswith("==>"):
-                        safe_log(log, line, "cyan")
-                    elif "[archbooster] Done" in line:
-                        safe_log(log, line, "green")
-                    else:
-                        safe_log(log, line)
-
-            except Exception as e:
-                safe_log(log, f"Exception: {e}", "red")
+            if backend is None:
+                safe_log(log, f"No backend owns {pkg.name} ({pkg.source}); skipped.", "red")
                 success = False
+            else:
+                try:
+                    # Route to the owning backend; stream its output line-by-line.
+                    async for line in stream_lines(
+                        lambda b=backend, p=pkg: b.update([p.name])
+                    ):
+                        if self._write_line(log, line):
+                            success = False
+                except Exception as e:
+                    safe_log(log, f"Exception: {e}", "red")
+                    success = False
 
             self._history.record(
                 package=pkg.name,
@@ -206,7 +256,7 @@ class ProgressScreen(Screen):
                 self._failed += 1
                 self._set_pkg_status(pkg.name, STATUS_FAILED)
 
-    async def _run_full_upgrade(self, log: RichLog, updater: Updater) -> None:
+    async def _run_full_upgrade(self, log: RichLog, registry: BackendRegistry) -> None:
         """Stream a single full `-Syu` — the correct path for the system layer."""
         for pkg in self._packages:
             self._set_pkg_status(pkg.name, STATUS_RUNNING)
@@ -214,23 +264,9 @@ class ProgressScreen(Screen):
 
         success = True
         try:
-            lines = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: list(updater.run_full_upgrade())
-            )
-            for line in lines:
-                line = line.rstrip()
-                if not line:
-                    continue
-                low = line.lower()
-                if "error:" in low or line.startswith("error"):
-                    safe_log(log, line, "red")
+            async for line in stream_lines(registry.full_upgrade):
+                if self._write_line(log, line):
                     success = False
-                elif "warning:" in low or line.startswith("warning"):
-                    safe_log(log, line, "yellow")
-                elif line.startswith("::") or line.startswith("==>"):
-                    safe_log(log, line, "cyan")
-                else:
-                    safe_log(log, line)
         except Exception as e:
             safe_log(log, f"Exception: {e}", "red")
             success = False

@@ -11,8 +11,9 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, Static
 
+from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.categorizer import categorize
-from archbooster.core.scanner import Package, Scanner
+from archbooster.core.scanner import Package
 
 
 PRIORITY_COLOR = {
@@ -210,7 +211,7 @@ class DashboardScreen(Screen):
         cfg = load_config()
 
         def _scan() -> list:
-            found = [p for p in Scanner().fetch(force=force)
+            found = [p for p in BackendRegistry().scan(force=force)
                      if p.name not in cfg.ignored]
             return categorize(
                 found,

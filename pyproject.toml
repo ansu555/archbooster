@@ -17,7 +17,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: System :: Software Distribution",
@@ -36,4 +35,10 @@ dev = ["pytest>=7.0"]
 archbooster = "archbooster.main:main"
 
 [tool.setuptools]
-packages = ["archbooster", "archbooster.core", "archbooster.screens", "archbooster.widgets"]
+packages = [
+    "archbooster",
+    "archbooster.core",
+    "archbooster.core.backends",
+    "archbooster.screens",
+    "archbooster.widgets",
+]
