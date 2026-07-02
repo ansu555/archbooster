@@ -5,9 +5,32 @@ build-backend = "setuptools.build_meta"
 [project]
 name            = "archbooster"
 version         = "0.1.0"
-description     = "Driver Booster-style selective update manager for Arch Linux"
+description     = "Selective update manager for Linux — update your apps, leave the OS alone"
+readme          = "README.md"
+license         = "MIT"
+license-files   = ["LICENSE"]
 requires-python = ">=3.11"
+authors         = [{ name = "ansu555" }]
+keywords        = ["arch", "pacman", "aur", "flatpak", "updates", "tui", "textual"]
 dependencies    = ["textual>=0.50.0"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Software Distribution",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage   = "https://github.com/ansu555/archbooster"
+Repository = "https://github.com/ansu555/archbooster"
+Issues     = "https://github.com/ansu555/archbooster/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
 
 [project.scripts]
 archbooster = "archbooster.main:main"

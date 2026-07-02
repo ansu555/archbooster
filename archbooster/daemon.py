@@ -13,7 +13,12 @@ def run_daemon() -> None:
     cfg      = load_config()
     scanner  = Scanner()
     packages = scanner.fetch(force=True)
-    packages = categorize(packages)
+    packages = [p for p in packages if p.name not in cfg.ignored]
+    packages = categorize(
+        packages,
+        extra_critical=cfg.extra_critical,
+        extra_optional=cfg.extra_optional,
+    )
 
     critical = [p for p in packages if p.priority == "critical"]
     total    = len(packages)

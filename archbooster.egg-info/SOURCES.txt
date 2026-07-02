@@ -15,6 +15,7 @@ archbooster/core/categorizer.py
 archbooster/core/config.py
 archbooster/core/history.py
 archbooster/core/scanner.py
+archbooster/core/sudo_auth.py
 archbooster/core/updater.py
 archbooster/screens/__init__.py
 archbooster/screens/dashboard.py
