@@ -1,6 +1,6 @@
 # Maintainer: ansu555
 pkgname=archbooster
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Selective update manager for Linux — update your apps, leave the OS alone"
 arch=('any')

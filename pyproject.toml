@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "archbooster"
-version         = "0.2.0"
+version         = "0.3.0"
 description     = "Selective update manager for Linux — update your apps, leave the OS alone"
 readme          = "README.md"
 license         = "MIT"
