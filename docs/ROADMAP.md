@@ -2,9 +2,9 @@
 
 v0.2 (Phases 0–5) is the "release-ready, cross-distro, has a reason to exist"
 milestone: unification across pacman/AUR/Flatpak, the app-vs-system guardrail,
-and pipx/binary/AUR distribution. Phase 6 picked four of the five standout
-features below by impact (deferring only Snap/Homebrew, the least
-differentiating one) and **shipped all four**:
+and pipx/binary/AUR distribution. Phase 6 shipped all five standout features
+below — the first four picked immediately by impact, Snap/Homebrew added in a
+follow-up round once asked for directly:
 
 - [x] **Changelog / PKGBUILD diff viewer** — `Backend.changelog(pkg)`:
       AUR packages get a real PKGBUILD diff (fetched from AUR's cgit mirror,
@@ -39,25 +39,47 @@ differentiating one) and **shipped all four**:
       exclusion of critical/system packages regardless of what the profile
       itself matches, since this path runs unattended. Logged to history and
       named in the desktop notification, never silent.
-- [ ] **Optional extra backends** — Snap, Homebrew. Deferred; lowest-impact of
-      the five per the original pick.
+- [x] **Optional extra backends** — Snap, Homebrew.
+      *(`backends/snap.py`: `snap refresh --list` parsing — a real row's Rev
+      column (3rd field) is always a bare integer, which is what distinguishes
+      it from both the header row and the "All snaps up to date." message,
+      ruled out structurally rather than by matching specific wording. Updates
+      run under `sudo` (snapd needs root); unlike pacman/apt/dnf there's no
+      confirmation flag to suppress, so `confirm` is accepted for interface
+      consistency only. `backends/brew.py`: `brew outdated --verbose` (run
+      once for formulae, once more with `--cask` for GUI apps, merged) parses
+      `name (current) < new` lines; commands never run under `sudo` —
+      Homebrew explicitly shouldn't be run as root. Both are app-only
+      (`has_system_layer = False`), same as Flatpak.
+      Building these surfaced a real, if previously dormant, correctness gap:
+      `categorize()`'s `SOURCE_BASE_PATTERNS` had no entry for
+      "Flatpak"/"snap"/"brew", so packages from those backends fell back to
+      classifying against Arch's pattern list. Flatpak's reverse-DNS app IDs
+      (`org.mozilla.firefox`) never collided with it in practice, but
+      Homebrew's flat formula names do — `openssl` is a common brew formula
+      and also an exact entry in `CRITICAL_PATTERNS`, which would have shown
+      it locked out in the dashboard despite Homebrew having no system layer
+      to protect at all. Fixed by giving all three an explicit empty critical
+      list; verified live in a mixed-source headless scan that a brew
+      `openssl` package classifies "normal" and is selectable.)*
 
 Also extracted `core/procutil.py` (`stream_subprocess`) once apt/dnf made it
 the 3rd/4th copy of the same subprocess-streaming loop that `updater.py` and
 `flatpak.py` already had — refactored those two to use it too, no behavior
 change (all pre-existing tests still pass unchanged).
 
-**Phase 6 status: DONE.** 163 tests green (up from 53 at the start of the
-phase). `v0.2` itself is still untagged (`pyproject.toml` reads `0.1.0`) —
-tagging `v0.2`/`v0.3` and the AUR push (blocked since Phase 4 on
-`aur.archlinux.org` registration being closed) are release-process steps for
-the user to trigger, not code changes.
+**Phase 6 status: DONE — all five items shipped.** 192 tests green (up from
+53 at the start of the phase; Snap/Homebrew were a follow-up round after the
+first four, added +29 tests). `v0.2` itself is still untagged
+(`pyproject.toml` reads `0.1.0`) — tagging `v0.2`/`v0.3` and the AUR push
+(blocked since Phase 4 on `aur.archlinux.org` registration being closed) are
+release-process steps for the user to trigger, not code changes.
 
 ## Why not "more features" instead?
 
 The differentiator was already latent in what shipped for v0.2:
 **unification + the safety guardrail + rollback**. Those are the things no
 single package-manager command can do on its own. Phase 6 built depth on
-that — rollback, changelog trust, and safe automation — rather than pure
-breadth (Snap/Homebrew for their own sake), while still picking up apt/dnf
-since reaching Debian/Fedora users is itself high-impact.
+that first — rollback, changelog trust, and safe automation — before coming
+back for the remaining breadth (Snap/Homebrew), while apt/dnf landed early
+since reaching Debian/Fedora users is itself high-impact, not just breadth.

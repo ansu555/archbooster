@@ -25,9 +25,11 @@ from pathlib import Path
 
 from archbooster.core.backends.apt import AptBackend
 from archbooster.core.backends.base import Backend
+from archbooster.core.backends.brew import BrewBackend
 from archbooster.core.backends.dnf import DnfBackend
 from archbooster.core.backends.flatpak import FlatpakBackend
 from archbooster.core.backends.pacman import PacmanBackend
+from archbooster.core.backends.snap import SnapBackend
 from archbooster.core.scanner import Package
 from archbooster.core.snapshot import SnapshotManager
 
@@ -37,7 +39,9 @@ CACHE_TTL = timedelta(hours=1)
 # Every backend ArchBooster knows how to drive. A backend only participates if
 # its is_available() is True on this host — that's what makes a Flatpak-only
 # (non-Arch) host degrade cleanly instead of showing a misleading empty list.
-BACKEND_CLASSES: list[type[Backend]] = [PacmanBackend, FlatpakBackend, AptBackend, DnfBackend]
+BACKEND_CLASSES: list[type[Backend]] = [
+    PacmanBackend, FlatpakBackend, AptBackend, DnfBackend, SnapBackend, BrewBackend,
+]
 
 
 class BackendRegistry:

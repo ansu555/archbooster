@@ -81,6 +81,10 @@ name in the desktop notification, so it's never silent.
   Debian/Fedora package names don't match Arch's (`linux-image-*` vs
   `linux`, `libc6` vs `glibc`, ...). `extra_critical` extends whichever list
   applies to a given package's backend.
+- Flatpak, Snap, and Homebrew have no system layer at all, so packages from
+  those backends never classify as "critical" regardless of name — this
+  matters in practice for Homebrew, whose flat formula names (e.g.
+  `openssl`) can otherwise collide with an Arch-shaped critical pattern.
 - Backend-specific settings (e.g. per-Flatpak-remote config) don't exist yet;
   Flatpak updates are driven entirely by whatever remotes `flatpak` itself
   already has configured.

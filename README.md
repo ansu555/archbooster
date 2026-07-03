@@ -4,12 +4,12 @@
 
 A selective update manager for Linux, built with Python + Textual. ArchBooster
 gives you one unified, checkbox-driven view across every package source on
-your machine — official repos, AUR, Flatpak, apt, and dnf — categorizes
-updates by risk, and refuses to let a partial system upgrade slip through by
-accident.
+your machine — official repos, AUR, Flatpak, apt, dnf, Snap, and Homebrew —
+categorizes updates by risk, and refuses to let a partial system upgrade slip
+through by accident.
 
 Runs on **Arch (+ Arch-based) via pacman/AUR, Debian/Ubuntu via apt,
-Fedora/RHEL via dnf, and any distro with Flatpak.**
+Fedora/RHEL via dnf, and any distro with Flatpak, Snap, or Homebrew.**
 
 ---
 
@@ -38,8 +38,8 @@ single command does.
 
 ## Features
 
-- Unified scan across **pacman + AUR (yay/paru), Flatpak, apt, and dnf**,
-  grouped by source
+- Unified scan across **pacman + AUR (yay/paru), Flatpak, apt, dnf, Snap, and
+  Homebrew**, grouped by source
 - 🔴 Critical / 🟡 Normal / 🟢 Optional categorization (configurable overrides,
   with distro-specific system-package lists for apt/dnf too)
 - Select individual packages to update — never forced, system packages locked
@@ -70,6 +70,8 @@ single command does.
   - **Debian / Ubuntu**: `apt` (present by default)
   - **Fedora / RHEL**: `dnf` (present by default)
   - **Any distro**: `flatpak`, with at least one remote added (e.g. Flathub)
+  - **Any distro**: `snap` (snapd)
+  - **Any distro**: `brew` (Homebrew/Linuxbrew)
 - Optional: `notify-send` (`libnotify`) for desktop notifications from the
   background daemon — installed by default on almost every desktop distro
 - Optional: `snapper` or `timeshift` for pre-upgrade snapshots + rollback
@@ -205,6 +207,8 @@ archbooster/
 │       ├── flatpak.py           # Flatpak — the cross-distro path
 │       ├── apt.py                # Debian/Ubuntu
 │       ├── dnf.py                # Fedora/RHEL
+│       ├── snap.py                # snapd
+│       ├── brew.py                # Homebrew/Linuxbrew
 │       └── registry.py          # auto-detects installed backends
 ├── screens/
 │   ├── dashboard.py             # Main checklist UI, grouped by source
@@ -230,9 +234,9 @@ archbooster/
 - [x] Phase 3 — Flatpak backend (cross-distro milestone)
 - [x] Phase 4 — Packaging: pipx/PyPI, static binary, AUR `PKGBUILD`s, release CI
 - [x] Phase 5 — Desktop notifications, docs, **v0.2 public release**
-- [x] Phase 6 — Changelog/diff viewer, snapshot + rollback, apt/dnf backends,
-      update profiles + opt-in auto-update — see
-      [the roadmap doc](docs/ROADMAP.md) for what shipped vs. deferred
+- [x] Phase 6 — Changelog/diff viewer, snapshot + rollback, apt/dnf/Snap/
+      Homebrew backends, update profiles + opt-in auto-update — see
+      [the roadmap doc](docs/ROADMAP.md) for details
 
 ---
 

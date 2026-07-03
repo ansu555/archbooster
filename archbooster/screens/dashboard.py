@@ -25,9 +25,10 @@ PRIORITY_COLOR = {
 
 # Display order for source groups — mirrors how a mixed system is actually
 # laid out: pacman's two layers first, then app-only backends like Flatpak,
-# then the other native distro backends. An unrecognised future source (snap,
-# brew, ...) simply sorts after these.
-SOURCE_ORDER = {"official": 0, "AUR": 1, "Flatpak": 2, "apt": 3, "dnf": 4}
+# then the other native distro backends, then the remaining app-only stores.
+SOURCE_ORDER = {
+    "official": 0, "AUR": 1, "Flatpak": 2, "apt": 3, "dnf": 4, "snap": 5, "brew": 6,
+}
 
 
 class PackageRow(Static):

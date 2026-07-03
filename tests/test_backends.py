@@ -5,10 +5,12 @@ import archbooster.core.backends.pacman as pac
 import archbooster.core.backends.registry as reg
 from archbooster.core.backends.apt import AptBackend
 from archbooster.core.backends.base import Backend
+from archbooster.core.backends.brew import BrewBackend
 from archbooster.core.backends.dnf import DnfBackend
 from archbooster.core.backends.flatpak import FlatpakBackend
 from archbooster.core.backends.pacman import PacmanBackend
 from archbooster.core.backends.registry import BackendRegistry
+from archbooster.core.backends.snap import SnapBackend
 from archbooster.core.scanner import Package
 
 
@@ -302,6 +304,11 @@ def test_flatpak_registered_as_a_known_backend():
 def test_apt_and_dnf_registered_as_known_backends():
     assert AptBackend in reg.BACKEND_CLASSES
     assert DnfBackend in reg.BACKEND_CLASSES
+
+
+def test_snap_and_brew_registered_as_known_backends():
+    assert SnapBackend in reg.BACKEND_CLASSES
+    assert BrewBackend in reg.BACKEND_CLASSES
 
 
 def test_registry_degrades_to_flatpak_only_on_non_arch_host(monkeypatch):

@@ -64,11 +64,21 @@ DNF_OPTIONAL_PATTERNS = [
 # categorize() picks the right base pattern pair for each package by its
 # Package.source tag. Sources not listed here (a future backend) fall back to
 # the Arch lists, same as classify()'s own defaults.
+#
+# Flatpak/Snap/Homebrew have no system layer at all (has_system_layer=False on
+# their Backend), so nothing from them should ever classify as "critical" —
+# they get an empty critical list rather than falling back to Arch's. This
+# matters for flat package-name backends in particular: a Homebrew formula is
+# commonly named e.g. "openssl", which collides with an Arch CRITICAL_PATTERNS
+# entry and would otherwise get wrongly flagged critical.
 SOURCE_BASE_PATTERNS: dict[str, tuple[list[str], list[str]]] = {
     "official": (CRITICAL_PATTERNS, OPTIONAL_PATTERNS),
     "AUR":      (CRITICAL_PATTERNS, OPTIONAL_PATTERNS),
     "apt":      (APT_CRITICAL_PATTERNS, APT_OPTIONAL_PATTERNS),
     "dnf":      (DNF_CRITICAL_PATTERNS, DNF_OPTIONAL_PATTERNS),
+    "Flatpak":  ([], OPTIONAL_PATTERNS),
+    "snap":     ([], OPTIONAL_PATTERNS),
+    "brew":     ([], OPTIONAL_PATTERNS),
 }
 
 

@@ -80,6 +80,19 @@ def test_categorize_routes_pattern_lists_by_source():
 
 
 def test_categorize_unknown_source_falls_back_to_arch_patterns():
-    packages = [_pkg("linux", "snap")]
+    packages = [_pkg("linux", "some-future-backend")]
     categorize(packages)
     assert packages[0].priority == "critical"
+
+
+def test_categorize_system_layer_free_sources_never_classify_critical():
+    # Flatpak/snap/brew have no system layer at all, so even a name that
+    # collides with an Arch CRITICAL_PATTERNS entry (e.g. "openssl" is a very
+    # common Homebrew formula) must never come back "critical" for them.
+    packages = [
+        _pkg("openssl", "brew"),
+        _pkg("sudo", "snap"),
+        _pkg("systemd", "Flatpak"),
+    ]
+    categorize(packages)
+    assert [p.priority for p in packages] == ["normal", "normal", "normal"]
