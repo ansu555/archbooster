@@ -1,5 +1,12 @@
 """Tests for the package categorizer (priority + system-layer guardrail)."""
-from archbooster.core.categorizer import classify, is_system
+from archbooster.core.categorizer import (
+    APT_CRITICAL_PATTERNS,
+    DNF_CRITICAL_PATTERNS,
+    Package,
+    categorize,
+    classify,
+    is_system,
+)
 
 
 def test_critical_exact_and_prefix():
@@ -32,3 +39,47 @@ def test_is_system_matches_critical():
     assert is_system("mesa") is True
     assert is_system("firefox") is False
     assert is_system("google-chrome") is False
+
+
+# --------------------------------------------------------------------------- #
+# multi-distro base pattern lists (apt/dnf)
+# --------------------------------------------------------------------------- #
+
+def test_apt_base_patterns_classify_debian_names_as_critical():
+    assert classify("linux-image-generic", base_critical=APT_CRITICAL_PATTERNS) == "critical"
+    assert classify("libc6", base_critical=APT_CRITICAL_PATTERNS) == "critical"
+    assert classify("firefox", base_critical=APT_CRITICAL_PATTERNS) == "normal"
+
+
+def test_dnf_base_patterns_classify_fedora_names_as_critical():
+    assert classify("kernel-core", base_critical=DNF_CRITICAL_PATTERNS) == "critical"
+    assert classify("glibc", base_critical=DNF_CRITICAL_PATTERNS) == "critical"
+    assert classify("firefox", base_critical=DNF_CRITICAL_PATTERNS) == "normal"
+
+
+def test_is_system_honours_base_critical_override():
+    # "libc6" isn't in the Arch list (which uses "glibc"), so it must default
+    # to "normal" (not critical) unless the apt base list is supplied.
+    assert is_system("libc6") is False
+    assert is_system("libc6", base_critical=APT_CRITICAL_PATTERNS) is True
+
+
+def _pkg(name: str, source: str) -> Package:
+    return Package(name=name, current="1", new="2", source=source, priority="normal")
+
+
+def test_categorize_routes_pattern_lists_by_source():
+    packages = [
+        _pkg("linux", "official"),   # Arch critical
+        _pkg("libc6", "apt"),        # apt critical, NOT in the Arch list
+        _pkg("kernel-core", "dnf"),  # dnf critical, NOT in the Arch list
+        _pkg("firefox", "apt"),      # apt normal
+    ]
+    categorize(packages)
+    assert [p.priority for p in packages] == ["critical", "critical", "critical", "normal"]
+
+
+def test_categorize_unknown_source_falls_back_to_arch_patterns():
+    packages = [_pkg("linux", "snap")]
+    categorize(packages)
+    assert packages[0].priority == "critical"

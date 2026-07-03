@@ -155,3 +155,75 @@ def test_full_upgrade_streams_the_built_command(monkeypatch):
     out = list(b.full_upgrade())
     assert out == ["full\n"]
     assert captured["cmd"] == ["flatpak", "update", "-y"]
+
+
+# --------------------------------------------------------------------------- #
+# changelog
+# --------------------------------------------------------------------------- #
+
+def _gimp_pkg() -> Package:
+    return Package(name="org.gimp.GIMP", current="2.10.34", new="2.10.36",
+                   source="Flatpak", priority="normal")
+
+
+def test_changelog_none_without_flatpak(monkeypatch):
+    monkeypatch.setattr(fp.shutil, "which", lambda name: None)
+    assert FlatpakBackend().changelog(_gimp_pkg()) is None
+
+
+def test_changelog_tries_remotes_until_one_has_a_log(monkeypatch):
+    monkeypatch.setattr(
+        fp.shutil, "which",
+        lambda name: "/usr/bin/flatpak" if name == "flatpak" else None,
+    )
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode = 0
+            stdout = ""
+        if cmd[:2] == ["flatpak", "remotes"]:
+            r = R(); r.stdout = "flathub\nfedora\n"; return r
+        if cmd[:3] == ["flatpak", "remote-info", "--log"] and cmd[3] == "flathub":
+            r = R(); r.returncode = 1; r.stdout = ""; return r
+        if cmd[:3] == ["flatpak", "remote-info", "--log"] and cmd[3] == "fedora":
+            r = R(); r.stdout = "commit abc123\n    Fixed a crash\n"; return r
+        return R()
+
+    monkeypatch.setattr(fp.subprocess, "run", fake_run)
+    log = FlatpakBackend().changelog(_gimp_pkg())
+    assert log == "commit abc123\n    Fixed a crash"
+    # Tried flathub first (empty/failed), then fell through to fedora.
+    assert calls[1][3] == "flathub"
+    assert calls[2][3] == "fedora"
+
+
+def test_changelog_returns_none_when_no_remote_has_a_log(monkeypatch):
+    monkeypatch.setattr(
+        fp.shutil, "which",
+        lambda name: "/usr/bin/flatpak" if name == "flatpak" else None,
+    )
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 1
+            stdout = "flathub\n" if cmd[:2] == ["flatpak", "remotes"] else ""
+        return R()
+
+    monkeypatch.setattr(fp.subprocess, "run", fake_run)
+    assert FlatpakBackend().changelog(_gimp_pkg()) is None
+
+
+def test_changelog_returns_none_on_remotes_timeout(monkeypatch):
+    monkeypatch.setattr(
+        fp.shutil, "which",
+        lambda name: "/usr/bin/flatpak" if name == "flatpak" else None,
+    )
+
+    def raise_timeout(*a, **k):
+        raise fp.subprocess.TimeoutExpired(cmd="flatpak", timeout=15)
+
+    monkeypatch.setattr(fp.subprocess, "run", raise_timeout)
+    assert FlatpakBackend().changelog(_gimp_pkg()) is None

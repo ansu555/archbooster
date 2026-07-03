@@ -9,6 +9,7 @@ of the app needs:
   scan()          → which of its packages have updates?  (list[Package])
   update(names)   → run a selective, app-layer update of the named packages.
   full_upgrade()  → run this backend's whole-layer upgrade.
+  changelog(pkg)  → optional: what changed in this pending update? (str | None)
 
 Identifying attributes:
 
@@ -60,3 +61,14 @@ class Backend(ABC):
     def owns(self, package: Package) -> bool:
         """True if `package` came from (and is updated by) this backend."""
         return package.source in self.sources
+
+    def changelog(self, package: Package) -> str | None:
+        """Return a human-readable changelog/diff for `package`'s pending
+        update, or None if this backend has no way to produce one.
+
+        Concrete by default (unlike the methods above) — most backends won't
+        have anything meaningful to show for every package, so returning None
+        is a valid, common answer rather than something every backend must
+        implement.
+        """
+        return None

@@ -13,6 +13,7 @@ from textual.widgets import Footer, Header, Label, Static
 
 from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.categorizer import categorize
+from archbooster.core.profiles import matches_profile
 from archbooster.core.scanner import Package
 
 
@@ -23,9 +24,10 @@ PRIORITY_COLOR = {
 }
 
 # Display order for source groups — mirrors how a mixed system is actually
-# laid out: pacman's two layers first, then app-only backends like Flatpak.
-# An unrecognised future source (apt, snap, ...) simply sorts after these.
-SOURCE_ORDER = {"official": 0, "AUR": 1, "Flatpak": 2}
+# laid out: pacman's two layers first, then app-only backends like Flatpak,
+# then the other native distro backends. An unrecognised future source (snap,
+# brew, ...) simply sorts after these.
+SOURCE_ORDER = {"official": 0, "AUR": 1, "Flatpak": 2, "apt": 3, "dnf": 4}
 
 
 class PackageRow(Static):
@@ -134,7 +136,8 @@ class StatusBar(Static):
         self.update(
             f"[{col}]Selected: {selected}/{total}[/{col}]"
             f"   [dim][SPACE] Toggle  [A] All  [N] None  [I] Invert  "
-            f"[ENTER] Update apps  [F] Full upgrade  [R] Rescan[/dim]"
+            f"[ENTER] Update apps  [F] Full upgrade  [R] Rescan  "
+            f"[C] Changelog  [P] Profile[/dim]"
         )
 
 
@@ -200,6 +203,8 @@ class DashboardScreen(Screen):
         Binding("enter", "update",       "Update apps",  show=False),
         Binding("f",     "full_upgrade", "Full upgrade", show=False),
         Binding("r",     "rescan",       "Rescan",       show=False),
+        Binding("c",     "show_changelog", "Changelog",  show=False),
+        Binding("p",     "cycle_profile", "Profile",     show=False),
         Binding("j",     "cursor_down", "",       show=False),
         Binding("k",     "cursor_up",   "",       show=False),
         Binding("space", "toggle_row",  "Toggle", show=False),
@@ -211,6 +216,8 @@ class DashboardScreen(Screen):
         super().__init__()
         self._packages: list = []
         self._cursor: int = 0
+        self._profile_patterns: dict[str, list[str]] = {}
+        self._active_profile_idx: int = -1  # -1 = no profile filter active
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -233,6 +240,8 @@ class DashboardScreen(Screen):
     async def _do_scan(self, force: bool = False) -> None:
         from archbooster.core.config import load_config
         cfg = load_config()
+        self._profile_patterns = cfg.profiles
+        self._active_profile_idx = -1
 
         def _scan() -> list:
             found = [p for p in BackendRegistry().scan(force=force)
@@ -328,6 +337,40 @@ class DashboardScreen(Screen):
             return
         from archbooster.screens.progress import ProgressScreen
         self.app.push_screen(ProgressScreen(selected))
+
+    def action_cycle_profile(self) -> None:
+        """Cycle through configured [profiles] entries, auto-selecting the
+        rows each one matches (never a locked/system row). Cycling past the
+        last profile clears the filter back to "everything selected"."""
+        names = list(self._profile_patterns.keys())
+        if not names:
+            self.notify(
+                "No profiles configured — add a [profiles] entry in config.toml",
+                severity="warning",
+            )
+            return
+        self._active_profile_idx += 1
+        if self._active_profile_idx >= len(names):
+            self._active_profile_idx = -1
+            for row in self._rows():
+                row.select(not row.locked)
+            self.notify("Profile filter cleared — all apps selected", severity="information")
+        else:
+            name = names[self._active_profile_idx]
+            patterns = self._profile_patterns[name]
+            for row in self._rows():
+                row.select(matches_profile(row.pkg.name, patterns) and not row.locked)
+            self.notify(f"Profile: {name}", severity="information")
+        self._refresh_status()
+
+    def action_show_changelog(self) -> None:
+        rows = self._rows()
+        if not rows:
+            return
+        pkg = rows[self._cursor].pkg
+        backend = BackendRegistry().backend_for(pkg)
+        from archbooster.screens.changelog import ChangelogScreen
+        self.app.push_screen(ChangelogScreen(pkg, backend))
 
     def action_full_upgrade(self) -> None:
         system_pkgs = [r.pkg for r in self._rows() if r.locked]

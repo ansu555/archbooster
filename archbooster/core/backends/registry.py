@@ -23,10 +23,13 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from archbooster.core.backends.apt import AptBackend
 from archbooster.core.backends.base import Backend
+from archbooster.core.backends.dnf import DnfBackend
 from archbooster.core.backends.flatpak import FlatpakBackend
 from archbooster.core.backends.pacman import PacmanBackend
 from archbooster.core.scanner import Package
+from archbooster.core.snapshot import SnapshotManager
 
 CACHE_FILE = Path.home() / ".cache" / "archbooster" / "pending.json"
 CACHE_TTL = timedelta(hours=1)
@@ -34,7 +37,7 @@ CACHE_TTL = timedelta(hours=1)
 # Every backend ArchBooster knows how to drive. A backend only participates if
 # its is_available() is True on this host — that's what makes a Flatpak-only
 # (non-Arch) host degrade cleanly instead of showing a misleading empty list.
-BACKEND_CLASSES: list[type[Backend]] = [PacmanBackend, FlatpakBackend]
+BACKEND_CLASSES: list[type[Backend]] = [PacmanBackend, FlatpakBackend, AptBackend, DnfBackend]
 
 
 class BackendRegistry:
@@ -86,15 +89,27 @@ class BackendRegistry:
         for backend, names in by_backend.values():
             yield from backend.update(names)
 
-    def full_upgrade(self) -> Iterator[str]:
+    def full_upgrade(self, snapshot: SnapshotManager | None = None) -> Iterator[str]:
         """Run a full upgrade on every backend that has a system layer.
 
-        Today that is pacman only (`-Syu`); app-only backends like Flatpak have
-        no OS layer and are excluded from the full-upgrade path.
+        Today that is pacman/apt/dnf; app-only backends like Flatpak have no
+        OS layer and are excluded from the full-upgrade path.
+
+        If `snapshot` is given and available, a snapshot is created first —
+        the pre-upgrade safety net so a broken full upgrade can be rolled
+        back. Snapshot creation failing or being unavailable never blocks the
+        upgrade itself; it's a bonus, not a requirement.
         """
         ran = False
         for backend in self.backends:
             if backend.has_system_layer:
+                if not ran and snapshot is not None and snapshot.is_available():
+                    yield f"[archbooster] Creating {snapshot.backend} snapshot before full upgrade...\n"
+                    snap_id = snapshot.create("archbooster: pre-full-upgrade")
+                    if snap_id:
+                        yield f"[archbooster] Snapshot created: {snap_id}\n"
+                    else:
+                        yield "[archbooster] Snapshot creation failed; continuing without one.\n"
                 ran = True
                 yield from backend.full_upgrade()
         if not ran:

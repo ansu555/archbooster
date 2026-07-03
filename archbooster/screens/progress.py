@@ -17,6 +17,7 @@ from archbooster.core.scanner import Package
 from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.history import History
 from archbooster.core.config import load_config
+from archbooster.core.snapshot import SnapshotManager
 from archbooster.core.sudo_auth import authenticate, is_sudo_cached
 
 STATUS_PENDING = "[dim]⏳ Pending[/dim]"
@@ -178,7 +179,8 @@ class ProgressScreen(Screen):
 
     async def _run_updates(self) -> None:
         log      = self.query_one("#live-log", RichLog)
-        registry = BackendRegistry(confirm=load_config().confirm)
+        cfg      = load_config()
+        registry = BackendRegistry(confirm=cfg.confirm)
 
         # Pre-flight: ensure sudo is cached so yay/pacman can run without TTY
         cached = await asyncio.get_event_loop().run_in_executor(None, is_sudo_cached)
@@ -190,7 +192,8 @@ class ProgressScreen(Screen):
             prompt.remove_class("visible")
 
         if self._full_upgrade:
-            await self._run_full_upgrade(log, registry)
+            snapshot = SnapshotManager(cfg.snapshot_backend) if cfg.snapshot_enabled else None
+            await self._run_full_upgrade(log, registry, snapshot)
         else:
             await self._run_selective(log, registry)
 
@@ -256,15 +259,21 @@ class ProgressScreen(Screen):
                 self._failed += 1
                 self._set_pkg_status(pkg.name, STATUS_FAILED)
 
-    async def _run_full_upgrade(self, log: RichLog, registry: BackendRegistry) -> None:
-        """Stream a single full `-Syu` — the correct path for the system layer."""
+    async def _run_full_upgrade(
+        self, log: RichLog, registry: BackendRegistry, snapshot: SnapshotManager | None,
+    ) -> None:
+        """Stream a single full system upgrade — the correct path for the system layer.
+
+        A pre-upgrade snapshot (snapper/timeshift) is taken first when enabled
+        and available, so a broken upgrade has a rollback point.
+        """
         for pkg in self._packages:
             self._set_pkg_status(pkg.name, STATUS_RUNNING)
-        log.write("\n[bold cyan]── Full system upgrade (pacman -Syu) ──────────────[/bold cyan]")
+        log.write("\n[bold cyan]── Full system upgrade ──────────────[/bold cyan]")
 
         success = True
         try:
-            async for line in stream_lines(registry.full_upgrade):
+            async for line in stream_lines(lambda: registry.full_upgrade(snapshot=snapshot)):
                 if self._write_line(log, line):
                     success = False
         except Exception as e:

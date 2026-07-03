@@ -16,6 +16,7 @@ import subprocess
 from collections.abc import Iterator
 
 from archbooster.core.backends.base import Backend
+from archbooster.core.procutil import stream_subprocess
 from archbooster.core.scanner import Package
 
 
@@ -84,23 +85,35 @@ class FlatpakBackend(Backend):
         )
 
     def _stream(self, cmd: list[str]) -> Iterator[str]:
-        yield f"[archbooster] Running: {' '.join(cmd)}\n"
+        yield from stream_subprocess(cmd)
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            # No TTY is attached here, so a prompt would otherwise block
-            # forever. DEVNULL makes any prompt read hit EOF instead of hanging.
-            stdin=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-        )
-        for line in process.stdout:
-            yield line
-        process.wait()
+    def changelog(self, package: Package) -> str | None:
+        """OSTree commit log for this app's pending update, via
+        `flatpak remote-info --log`.
 
-        if process.returncode != 0:
-            yield f"[archbooster] ERROR: exited with code {process.returncode}\n"
-        else:
-            yield "[archbooster] Update complete.\n"
+        `remote-ls --updates` doesn't say which remote an app came from, so
+        this tries every configured remote until one has a log for the app id
+        and returns that.
+        """
+        if not shutil.which("flatpak"):
+            return None
+        try:
+            remotes_result = subprocess.run(
+                ["flatpak", "remotes", "--columns=name"],
+                capture_output=True, text=True, timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+
+        remotes = [r.strip() for r in remotes_result.stdout.splitlines() if r.strip()]
+        for remote in remotes:
+            try:
+                result = subprocess.run(
+                    ["flatpak", "remote-info", "--log", remote, package.name],
+                    capture_output=True, text=True, timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                continue
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        return None

@@ -4,11 +4,12 @@
 
 A selective update manager for Linux, built with Python + Textual. ArchBooster
 gives you one unified, checkbox-driven view across every package source on
-your machine — official repos, AUR, and **Flatpak** — categorizes updates by
-risk, and refuses to let a partial system upgrade slip through by accident.
+your machine — official repos, AUR, Flatpak, apt, and dnf — categorizes
+updates by risk, and refuses to let a partial system upgrade slip through by
+accident.
 
-Runs on **Arch (+ Arch-based) via pacman/AUR, and on any distro with Flatpak
-— Fedora, Ubuntu, openSUSE, Debian, and beyond.**
+Runs on **Arch (+ Arch-based) via pacman/AUR, Debian/Ubuntu via apt,
+Fedora/RHEL via dnf, and any distro with Flatpak.**
 
 ---
 
@@ -37,15 +38,26 @@ single command does.
 
 ## Features
 
-- Unified scan across **pacman + AUR (yay/paru) + Flatpak**, grouped by source
-- 🔴 Critical / 🟡 Normal / 🟢 Optional categorization (configurable overrides)
+- Unified scan across **pacman + AUR (yay/paru), Flatpak, apt, and dnf**,
+  grouped by source
+- 🔴 Critical / 🟡 Normal / 🟢 Optional categorization (configurable overrides,
+  with distro-specific system-package lists for apt/dnf too)
 - Select individual packages to update — never forced, system packages locked
-- Live streaming output during update (real pacman/yay/flatpak output)
+- Live streaming output during update (real pacman/yay/flatpak/apt/dnf output)
+- **Changelog / PKGBUILD diff viewer** (`C`) — see what actually changed in an
+  AUR package (PKGBUILD diff) or a Flatpak (OSTree commit log) before updating
+- **Snapshot + rollback** — a full system upgrade (`F`) takes a snapper/
+  timeshift snapshot first when one's installed; roll back anytime from the
+  Snapshots screen (`B`)
+- **Update profiles** (`P`) — cycle named groups of packages (e.g. "browsers")
+  from config, auto-selecting just that group; also drives opt-in scheduled
+  auto-update of a chosen safe subset (system packages always excluded)
 - Update history log
 - Background daemon via systemd timer (checks every N hours) with a desktop
-  notification (`notify-send`) when updates are found — no auto-updates
-- Graceful degrade: on a non-Arch box with only Flatpak installed, the pacman
-  backend just reports unavailable and you get a clean Flatpak-only list
+  notification (`notify-send`) when updates are found
+- Graceful degrade: a backend that isn't installed just reports itself
+  unavailable, so e.g. a Fedora box with only Flatpak gets a clean
+  Flatpak-only list instead of a misleading empty one
 
 ---
 
@@ -55,9 +67,12 @@ single command does.
 - At least one supported backend:
   - **Arch / Arch-based**: `pacman-contrib` (for `checkupdates`) and
     `yay` or `paru` for AUR — `sudo pacman -S pacman-contrib`
+  - **Debian / Ubuntu**: `apt` (present by default)
+  - **Fedora / RHEL**: `dnf` (present by default)
   - **Any distro**: `flatpak`, with at least one remote added (e.g. Flathub)
 - Optional: `notify-send` (`libnotify`) for desktop notifications from the
   background daemon — installed by default on almost every desktop distro
+- Optional: `snapper` or `timeshift` for pre-upgrade snapshots + rollback
 - Optional: `systemd` user services, for the background timer
 
 ---
@@ -112,10 +127,13 @@ chmod +x archbooster-linux-x86_64
 | `N`      | Deselect all                  |
 | `I`      | Invert selection               |
 | `Enter`  | Update selected (app layer)   |
-| `F`      | Full system upgrade (`-Syu`)  |
+| `F`      | Full system upgrade (snapshot first, if enabled) |
 | `R`      | Re-scan for updates           |
+| `C`      | Changelog / PKGBUILD diff for the highlighted row |
+| `P`      | Cycle update profiles (see `[profiles]` in config) |
 | `H`      | Open history                  |
 | `S`      | Open settings                 |
+| `B`      | Open snapshots (rollback: `R` to arm, `Y` to confirm) |
 | `Q`      | Quit                          |
 
 ![ArchBooster dashboard](docs/screenshot.svg)
@@ -145,6 +163,18 @@ extra_optional = []      # extra package name prefixes to force "optional"
 
 [ignore]
 packages = []            # packages to hide from the update list entirely
+
+[snapshot]
+enabled = true           # snapshot (snapper/timeshift) before a full upgrade
+backend = "auto"          # "auto" | "snapper" | "timeshift" | "none"
+
+[profiles]
+# named package-name pattern groups for the [P] filter, e.g.:
+# browsers = ["firefox", "chromium", "*chrome*"]
+
+[automation]
+auto_update         = false  # opt-in: daemon auto-updates auto_update_profile
+auto_update_profile = ""     # name of a [profiles] entry
 ```
 
 See [`docs/config.md`](docs/config.md) for a field-by-field reference.
@@ -161,18 +191,26 @@ archbooster/
 ├── core/
 │   ├── scanner.py              # Package dataclass + line parsing
 │   ├── categorizer.py          # critical / normal / optional + guardrail
+│   │                           #   (per-distro pattern lists: Arch/apt/dnf)
 │   ├── updater.py               # runs yay/pacman, streams output
+│   ├── procutil.py              # shared subprocess-streaming helper
 │   ├── notify.py                # notify-send wrapper
 │   ├── history.py               # read/write history.json
 │   ├── config.py                # load/write config.toml
+│   ├── snapshot.py               # snapper/timeshift snapshot + rollback
+│   ├── profiles.py               # [profiles] pattern matching
 │   └── backends/
 │       ├── base.py              # Backend interface
-│       ├── pacman.py            # official repos + AUR
+│       ├── pacman.py            # official repos + AUR (+ PKGBUILD diff)
 │       ├── flatpak.py           # Flatpak — the cross-distro path
+│       ├── apt.py                # Debian/Ubuntu
+│       ├── dnf.py                # Fedora/RHEL
 │       └── registry.py          # auto-detects installed backends
 ├── screens/
 │   ├── dashboard.py             # Main checklist UI, grouped by source
-│   ├── progress.py              # Live update output
+│   ├── progress.py              # Live update output (+ pre-upgrade snapshot)
+│   ├── changelog.py              # Changelog / PKGBUILD diff viewer
+│   ├── snapshots.py               # Snapshot list + rollback
 │   ├── history.py                # Past updates log
 │   └── settings.py               # Settings editor
 ├── systemd/
@@ -192,9 +230,9 @@ archbooster/
 - [x] Phase 3 — Flatpak backend (cross-distro milestone)
 - [x] Phase 4 — Packaging: pipx/PyPI, static binary, AUR `PKGBUILD`s, release CI
 - [x] Phase 5 — Desktop notifications, docs, **v0.2 public release**
-- [ ] Phase 6+ — Changelog/diff viewer, snapshot + rollback, apt/dnf backends,
-      update profiles — see [the roadmap doc](docs/ROADMAP.md) for the
-      full list
+- [x] Phase 6 — Changelog/diff viewer, snapshot + rollback, apt/dnf backends,
+      update profiles + opt-in auto-update — see
+      [the roadmap doc](docs/ROADMAP.md) for what shipped vs. deferred
 
 ---
 
