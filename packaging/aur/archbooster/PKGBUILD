@@ -1,0 +1,37 @@
+# Maintainer: ansu555
+pkgname=archbooster
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Selective update manager for Linux — update your apps, leave the OS alone"
+arch=('any')
+url="https://github.com/ansu555/archbooster"
+license=('MIT')
+depends=('python' 'python-textual')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+optdepends=('flatpak: scan and update Flatpak apps'
+            'yay: AUR package scanning and updates'
+            'paru: AUR package scanning and updates')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/ansu555/archbooster/archive/refs/tags/v$pkgver.tar.gz"
+        "archbooster.service")
+sha256sums=('SKIP'
+            'SKIP')
+backup=()
+
+build() {
+    cd "$pkgname-$pkgver"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    python -m installer --destdir="$pkgdir" dist/*.whl
+
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+    # Repo's systemd/archbooster.service points ExecStart at %h/.local/bin
+    # (the pipx/pip --user install path). A pacman install lands the entry
+    # point at /usr/bin instead, so this package ships its own unit.
+    install -Dm644 "$srcdir/archbooster.service" "$pkgdir/usr/lib/systemd/user/archbooster.service"
+    install -Dm644 systemd/archbooster.timer "$pkgdir/usr/lib/systemd/user/archbooster.timer"
+}

@@ -19,8 +19,8 @@ def main():
         from archbooster.daemon import run_daemon
         run_daemon()
     elif args.scan:
-        from archbooster.core.scanner import Scanner
-        updates = Scanner().fetch()
+        from archbooster.core.backends.registry import BackendRegistry
+        updates = BackendRegistry().scan()
         for pkg in updates:
             print(f"{pkg.source:8} {pkg.name:40} {pkg.current:20} → {pkg.new}")
     else:

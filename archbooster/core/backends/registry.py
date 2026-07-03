@@ -1,0 +1,117 @@
+"""
+Backend registry — the unified entry point over every package manager
+ArchBooster supports.
+
+Responsibilities:
+  * Auto-detect which backends are usable on this host (via each backend's
+    is_available(), a shutil.which check underneath), so the app works on
+    Arch (pacman/AUR), on a Flatpak-only distro, or on both at once.
+  * Aggregate a single, combined list of pending updates across backends and
+    cache it to ~/.cache/archbooster/pending.json for fast TUI startup after a
+    background daemon scan.
+  * Route a selective update to the backend that owns each package, and a full
+    upgrade to the backend(s) that actually have a system layer.
+
+Adding a new package manager is one line — append its class to
+BACKEND_CLASSES; everything else here already iterates generically.
+"""
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from dataclasses import asdict
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from archbooster.core.backends.base import Backend
+from archbooster.core.backends.flatpak import FlatpakBackend
+from archbooster.core.backends.pacman import PacmanBackend
+from archbooster.core.scanner import Package
+
+CACHE_FILE = Path.home() / ".cache" / "archbooster" / "pending.json"
+CACHE_TTL = timedelta(hours=1)
+
+# Every backend ArchBooster knows how to drive. A backend only participates if
+# its is_available() is True on this host — that's what makes a Flatpak-only
+# (non-Arch) host degrade cleanly instead of showing a misleading empty list.
+BACKEND_CLASSES: list[type[Backend]] = [PacmanBackend, FlatpakBackend]
+
+
+class BackendRegistry:
+    def __init__(self, confirm: bool = False) -> None:
+        # confirm is forwarded to backends so their updaters honour the
+        # config's `confirm` flag; it has no effect on scanning.
+        self.backends: list[Backend] = [
+            backend
+            for backend in (cls(confirm=confirm) for cls in BACKEND_CLASSES)
+            if backend.is_available()
+        ]
+
+    # ---- scanning -------------------------------------------------- #
+
+    def scan(self, force: bool = False) -> list[Package]:
+        """Combined pending updates across all available backends.
+
+        Returns the cached result when it is still fresh, unless `force` is set.
+        """
+        if not force and self._cache_is_fresh():
+            return self._load_cache()
+        packages: list[Package] = []
+        for backend in self.backends:
+            packages += backend.scan()
+        self._save_cache(packages)
+        return packages
+
+    # ---- updating -------------------------------------------------- #
+
+    def backend_for(self, package: Package) -> Backend | None:
+        """The backend that owns `package` (by its source tag), or None."""
+        for backend in self.backends:
+            if backend.owns(package):
+                return backend
+        return None
+
+    def update(self, packages: list[Package]) -> Iterator[str]:
+        """Selectively update `packages`, routing each to its owning backend.
+
+        Packages are grouped by backend so each package manager is invoked once.
+        """
+        by_backend: dict[int, tuple[Backend, list[str]]] = {}
+        for pkg in packages:
+            backend = self.backend_for(pkg)
+            if backend is None:
+                yield f"[archbooster] No backend for {pkg.name} ({pkg.source}); skipping.\n"
+                continue
+            by_backend.setdefault(id(backend), (backend, []))[1].append(pkg.name)
+        for backend, names in by_backend.values():
+            yield from backend.update(names)
+
+    def full_upgrade(self) -> Iterator[str]:
+        """Run a full upgrade on every backend that has a system layer.
+
+        Today that is pacman only (`-Syu`); app-only backends like Flatpak have
+        no OS layer and are excluded from the full-upgrade path.
+        """
+        ran = False
+        for backend in self.backends:
+            if backend.has_system_layer:
+                ran = True
+                yield from backend.full_upgrade()
+        if not ran:
+            yield "[archbooster] No system-layer backend available for full upgrade.\n"
+
+    # ---- cache ----------------------------------------------------- #
+
+    def _cache_is_fresh(self) -> bool:
+        if not CACHE_FILE.exists():
+            return False
+        mtime = datetime.fromtimestamp(CACHE_FILE.stat().st_mtime)
+        return datetime.now() - mtime < CACHE_TTL
+
+    def _load_cache(self) -> list[Package]:
+        data = json.loads(CACHE_FILE.read_text())
+        return [Package(**p) for p in data]
+
+    def _save_cache(self, packages: list[Package]) -> None:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(json.dumps([asdict(p) for p in packages], indent=2))

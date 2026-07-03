@@ -1,0 +1,29 @@
+# Maintainer: ansu555
+pkgname=archbooster-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Selective update manager for Linux — update your apps, leave the OS alone (prebuilt binary)"
+arch=('x86_64')
+url="https://github.com/ansu555/archbooster"
+license=('MIT')
+provides=('archbooster')
+conflicts=('archbooster')
+optdepends=('flatpak: scan and update Flatpak apps'
+            'yay: AUR package scanning and updates'
+            'paru: AUR package scanning and updates')
+source=("https://github.com/ansu555/archbooster/releases/download/v$pkgver/archbooster-linux-x86_64"
+        "https://github.com/ansu555/archbooster/archive/refs/tags/v$pkgver.tar.gz"
+        "archbooster.service")
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+    install -Dm755 "$srcdir/archbooster-linux-x86_64" "$pkgdir/usr/bin/archbooster"
+
+    cd "archbooster-$pkgver"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 "$srcdir/archbooster.service" "$pkgdir/usr/lib/systemd/user/archbooster.service"
+    install -Dm644 systemd/archbooster.timer "$pkgdir/usr/lib/systemd/user/archbooster.timer"
+}

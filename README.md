@@ -28,10 +28,14 @@ Built with Python + Textual. Supports official repos and AUR (via yay/paru).
 ## Install
 
 ```bash
-git clone https://github.com/you/archbooster
+git clone https://github.com/ansu555/archbooster
 cd archbooster
 bash install.sh
 ```
+
+> The installer uses **pipx** (isolated venv — works on modern PEP 668 distros).
+> Install pipx first if needed: `sudo pacman -S python-pipx` /
+> `sudo apt install pipx` / `sudo dnf install pipx`.
 
 ---
 

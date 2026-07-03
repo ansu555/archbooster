@@ -11,8 +11,9 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, Static
 
+from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.categorizer import categorize
-from archbooster.core.scanner import Package, Scanner
+from archbooster.core.scanner import Package
 
 
 PRIORITY_COLOR = {
@@ -20,6 +21,11 @@ PRIORITY_COLOR = {
     "normal":   "yellow",
     "optional": "green",
 }
+
+# Display order for source groups — mirrors how a mixed system is actually
+# laid out: pacman's two layers first, then app-only backends like Flatpak.
+# An unrecognised future source (apt, snap, ...) simply sorts after these.
+SOURCE_ORDER = {"official": 0, "AUR": 1, "Flatpak": 2}
 
 
 class PackageRow(Static):
@@ -31,44 +37,61 @@ class PackageRow(Static):
     }
     PackageRow:hover { background: $boost; }
     PackageRow.focused-row { background: $accent 20%; }
+    PackageRow.locked { color: $text-muted; }
     .row-check   { width: 3;   color: $success; }
     .row-name    { width: 1fr; }
     .row-version { width: 30;  color: $text-muted; }
     .row-source  { width: 10;  color: $text-muted; }
     """
 
-    def __init__(self, pkg: Package, selected: bool = True) -> None:
+    def __init__(self, pkg: Package, selected: bool = True,
+                 locked: bool = False) -> None:
         super().__init__()
         self.pkg = pkg
-        self._selected = selected
+        # A locked row is a system-layer package. It can never be selected for a
+        # partial (cherry-pick) update — it may only go through a full -Syu.
+        self.locked = locked
+        self._selected = selected and not locked
+        if locked:
+            self.add_class("locked")
 
     def compose(self) -> ComposeResult:
         color = PRIORITY_COLOR[self.pkg.priority]
-        yield Label("✓" if self._selected else " ", classes="row-check",
-                    id=f"chk-{self.pkg.name}")
-        yield Label(f"[{color}]●[/{color}] {self.pkg.name}", classes="row-name")
+        # Held directly rather than looked up by a `#chk-{name}` id — package
+        # names aren't valid Textual identifiers (Flatpak ids like
+        # "org.gimp.GIMP" contain dots).
+        self._check_label = Label(self._check_glyph(), classes="row-check")
+        yield self._check_label
+        name = f"[{color}]●[/{color}] {self.pkg.name}"
+        if self.locked:
+            name += "  [dim](system · Full upgrade only)[/dim]"
+        yield Label(name, classes="row-name")
         yield Label(f"{self.pkg.current[:13]} → {self.pkg.new[:13]}", classes="row-version")
         yield Label(self.pkg.source, classes="row-source")
 
     def toggle(self) -> None:
+        if self.locked:
+            return
         self._selected = not self._selected
         self._refresh_check()
 
     def select(self, val: bool) -> None:
+        if self.locked:
+            return
         self._selected = val
         self._refresh_check()
 
     @property
     def selected(self) -> bool:
-        return self._selected
+        return self._selected and not self.locked
+
+    def _check_glyph(self) -> str:
+        if self.locked:
+            return "🔒"
+        return "✓" if self._selected else " "
 
     def _refresh_check(self) -> None:
-        try:
-            self.query_one(f"#chk-{self.pkg.name}", Label).update(
-                "✓" if self._selected else " "
-            )
-        except Exception:
-            pass
+        self._check_label.update(self._check_glyph())
 
 
 class SummaryBar(Static):
@@ -84,9 +107,10 @@ class SummaryBar(Static):
         normal   = sum(1 for p in packages if p.priority == "normal")
         optional = sum(1 for p in packages if p.priority == "optional")
         parts = []
-        if critical: parts.append(f"[red]● {critical} critical[/red]")
-        if normal:   parts.append(f"[yellow]● {normal} normal[/yellow]")
+        if normal:   parts.append(f"[yellow]● {normal} app[/yellow]")
         if optional: parts.append(f"[green]● {optional} optional[/green]")
+        if critical:
+            parts.append(f"[red]● {critical} system[/red] [dim](press F for full upgrade)[/dim]")
         self.update("   ".join(parts) if parts else "[dim]All packages up to date[/dim]")
 
 
@@ -101,13 +125,16 @@ class StatusBar(Static):
     """
     def update_status(self, selected: int, total: int) -> None:
         if total == 0:
-            self.update("[dim]No updates found — press [R] to rescan[/dim]")
+            self.update(
+                "[dim]No app updates — press [F] for full system upgrade, "
+                "[R] to rescan[/dim]"
+            )
             return
         col = "green" if selected > 0 else "red"
         self.update(
             f"[{col}]Selected: {selected}/{total}[/{col}]"
             f"   [dim][SPACE] Toggle  [A] All  [N] None  [I] Invert  "
-            f"[ENTER] Update  [R] Rescan[/dim]"
+            f"[ENTER] Update apps  [F] Full upgrade  [R] Rescan[/dim]"
         )
 
 
@@ -132,6 +159,25 @@ class ColumnHeader(Static):
         yield Label("Source",  classes="col-source")
 
 
+class SourceHeader(Static):
+    """Section divider grouping the rows below it by backend (Official/AUR/
+    Flatpak), so a mixed system reads as one unified list instead of an
+    undifferentiated pile of packages."""
+
+    DEFAULT_CSS = """
+    SourceHeader {
+        height: 1;
+        padding: 0 1;
+        background: $panel;
+        color: $text-muted;
+        text-style: bold;
+    }
+    """
+
+    def __init__(self, source: str) -> None:
+        super().__init__(f"── {source} ──")
+
+
 class PackageList(Container):
     DEFAULT_CSS = """
     PackageList {
@@ -150,9 +196,10 @@ class DashboardScreen(Screen):
     BINDINGS = [
         Binding("a",     "select_all",  "All",    show=False),
         Binding("n",     "select_none", "None",   show=False),
-        Binding("i",     "invert",      "Invert", show=False),
-        Binding("enter", "update",      "Update", show=False),
-        Binding("r",     "rescan",      "Rescan", show=False),
+        Binding("i",     "invert",       "Invert",       show=False),
+        Binding("enter", "update",       "Update apps",  show=False),
+        Binding("f",     "full_upgrade", "Full upgrade", show=False),
+        Binding("r",     "rescan",       "Rescan",       show=False),
         Binding("j",     "cursor_down", "",       show=False),
         Binding("k",     "cursor_up",   "",       show=False),
         Binding("space", "toggle_row",  "Toggle", show=False),
@@ -184,11 +231,25 @@ class DashboardScreen(Screen):
         self.run_worker(self._do_scan(force=force), exclusive=True)
 
     async def _do_scan(self, force: bool = False) -> None:
+        from archbooster.core.config import load_config
+        cfg = load_config()
+
         def _scan() -> list:
-            return categorize(Scanner().fetch(force=force))
+            found = [p for p in BackendRegistry().scan(force=force)
+                     if p.name not in cfg.ignored]
+            return categorize(
+                found,
+                extra_critical=cfg.extra_critical,
+                extra_optional=cfg.extra_optional,
+            )
         packages = await asyncio.get_event_loop().run_in_executor(None, _scan)
-        order = {"critical": 0, "normal": 1, "optional": 2}
-        packages.sort(key=lambda p: (order[p.priority], p.name))
+        # Group by source (Official / AUR / Flatpak) so a mixed system reads
+        # as one unified list; within each group, app layer first (actionable),
+        # system layer last (locked / full-upgrade only).
+        order = {"normal": 0, "optional": 1, "critical": 2}
+        packages.sort(
+            key=lambda p: (SOURCE_ORDER.get(p.source, 99), order[p.priority], p.name)
+        )
         self._render_packages(packages)
 
     def _render_packages(self, packages: list) -> None:
@@ -200,8 +261,13 @@ class DashboardScreen(Screen):
             self.query_one("#summary-bar", SummaryBar).update_counts([])
             self.query_one("#status-bar",  StatusBar).update_status(0, 0)
             return
+        last_source = None
         for pkg in packages:
-            pkg_list.mount(PackageRow(pkg, selected=True))
+            if pkg.source != last_source:
+                pkg_list.mount(SourceHeader(pkg.source))
+                last_source = pkg.source
+            locked = pkg.priority == "critical"
+            pkg_list.mount(PackageRow(pkg, selected=not locked, locked=locked))
         self._cursor = 0
         self._highlight_cursor()
         self._refresh_status()
@@ -254,14 +320,25 @@ class DashboardScreen(Screen):
         self._start_scan()
 
     def action_update(self) -> None:
+        # r.selected already excludes locked (system) rows — this can only ever
+        # be an app-layer, partial-upgrade-safe update.
         selected = [r.pkg for r in self._rows() if r.selected]
         if not selected:
-            self.notify("No packages selected!", severity="warning")
+            self.notify("No app packages selected!", severity="warning")
             return
         from archbooster.screens.progress import ProgressScreen
         self.app.push_screen(ProgressScreen(selected))
 
+    def action_full_upgrade(self) -> None:
+        system_pkgs = [r.pkg for r in self._rows() if r.locked]
+        if not system_pkgs:
+            self.notify("No system updates pending.", severity="information")
+            return
+        from archbooster.screens.progress import ProgressScreen
+        self.app.push_screen(ProgressScreen(system_pkgs, full_upgrade=True))
+
     def _refresh_status(self) -> None:
-        rows     = self._rows()
-        selected = sum(1 for r in rows if r.selected)
-        self.query_one("#status-bar", StatusBar).update_status(selected, len(rows))
+        # Only app-layer rows are selectable, so the counter reflects those.
+        selectable = [r for r in self._rows() if not r.locked]
+        selected   = sum(1 for r in selectable if r.selected)
+        self.query_one("#status-bar", StatusBar).update_status(selected, len(selectable))
