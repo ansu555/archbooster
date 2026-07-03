@@ -22,6 +22,11 @@ PRIORITY_COLOR = {
     "optional": "green",
 }
 
+# Display order for source groups — mirrors how a mixed system is actually
+# laid out: pacman's two layers first, then app-only backends like Flatpak.
+# An unrecognised future source (apt, snap, ...) simply sorts after these.
+SOURCE_ORDER = {"official": 0, "AUR": 1, "Flatpak": 2}
+
 
 class PackageRow(Static):
     DEFAULT_CSS = """
@@ -52,8 +57,11 @@ class PackageRow(Static):
 
     def compose(self) -> ComposeResult:
         color = PRIORITY_COLOR[self.pkg.priority]
-        yield Label(self._check_glyph(), classes="row-check",
-                    id=f"chk-{self.pkg.name}")
+        # Held directly rather than looked up by a `#chk-{name}` id — package
+        # names aren't valid Textual identifiers (Flatpak ids like
+        # "org.gimp.GIMP" contain dots).
+        self._check_label = Label(self._check_glyph(), classes="row-check")
+        yield self._check_label
         name = f"[{color}]●[/{color}] {self.pkg.name}"
         if self.locked:
             name += "  [dim](system · Full upgrade only)[/dim]"
@@ -83,10 +91,7 @@ class PackageRow(Static):
         return "✓" if self._selected else " "
 
     def _refresh_check(self) -> None:
-        try:
-            self.query_one(f"#chk-{self.pkg.name}", Label).update(self._check_glyph())
-        except Exception:
-            pass
+        self._check_label.update(self._check_glyph())
 
 
 class SummaryBar(Static):
@@ -154,6 +159,25 @@ class ColumnHeader(Static):
         yield Label("Source",  classes="col-source")
 
 
+class SourceHeader(Static):
+    """Section divider grouping the rows below it by backend (Official/AUR/
+    Flatpak), so a mixed system reads as one unified list instead of an
+    undifferentiated pile of packages."""
+
+    DEFAULT_CSS = """
+    SourceHeader {
+        height: 1;
+        padding: 0 1;
+        background: $panel;
+        color: $text-muted;
+        text-style: bold;
+    }
+    """
+
+    def __init__(self, source: str) -> None:
+        super().__init__(f"── {source} ──")
+
+
 class PackageList(Container):
     DEFAULT_CSS = """
     PackageList {
@@ -219,9 +243,13 @@ class DashboardScreen(Screen):
                 extra_optional=cfg.extra_optional,
             )
         packages = await asyncio.get_event_loop().run_in_executor(None, _scan)
-        # App layer first (actionable), system layer last (locked / full-upgrade only).
+        # Group by source (Official / AUR / Flatpak) so a mixed system reads
+        # as one unified list; within each group, app layer first (actionable),
+        # system layer last (locked / full-upgrade only).
         order = {"normal": 0, "optional": 1, "critical": 2}
-        packages.sort(key=lambda p: (order[p.priority], p.name))
+        packages.sort(
+            key=lambda p: (SOURCE_ORDER.get(p.source, 99), order[p.priority], p.name)
+        )
         self._render_packages(packages)
 
     def _render_packages(self, packages: list) -> None:
@@ -233,7 +261,11 @@ class DashboardScreen(Screen):
             self.query_one("#summary-bar", SummaryBar).update_counts([])
             self.query_one("#status-bar",  StatusBar).update_status(0, 0)
             return
+        last_source = None
         for pkg in packages:
+            if pkg.source != last_source:
+                pkg_list.mount(SourceHeader(pkg.source))
+                last_source = pkg.source
             locked = pkg.priority == "critical"
             pkg_list.mount(PackageRow(pkg, selected=not locked, locked=locked))
         self._cursor = 0

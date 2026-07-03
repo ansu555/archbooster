@@ -4,16 +4,16 @@ ArchBooster supports.
 
 Responsibilities:
   * Auto-detect which backends are usable on this host (via each backend's
-    is_available(), a shutil.which check underneath), so the app works on Arch
-    (pacman/AUR) today and will degrade cleanly on a Flatpak-only box later.
+    is_available(), a shutil.which check underneath), so the app works on
+    Arch (pacman/AUR), on a Flatpak-only distro, or on both at once.
   * Aggregate a single, combined list of pending updates across backends and
     cache it to ~/.cache/archbooster/pending.json for fast TUI startup after a
     background daemon scan.
   * Route a selective update to the backend that owns each package, and a full
     upgrade to the backend(s) that actually have a system layer.
 
-Adding a new package manager (Phase 3: Flatpak) is one line — append its class
-to BACKEND_CLASSES; everything else here already iterates generically.
+Adding a new package manager is one line — append its class to
+BACKEND_CLASSES; everything else here already iterates generically.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from archbooster.core.backends.base import Backend
+from archbooster.core.backends.flatpak import FlatpakBackend
 from archbooster.core.backends.pacman import PacmanBackend
 from archbooster.core.scanner import Package
 
@@ -31,8 +32,9 @@ CACHE_FILE = Path.home() / ".cache" / "archbooster" / "pending.json"
 CACHE_TTL = timedelta(hours=1)
 
 # Every backend ArchBooster knows how to drive. A backend only participates if
-# its is_available() is True on this host.
-BACKEND_CLASSES: list[type[Backend]] = [PacmanBackend]
+# its is_available() is True on this host — that's what makes a Flatpak-only
+# (non-Arch) host degrade cleanly instead of showing a misleading empty list.
+BACKEND_CLASSES: list[type[Backend]] = [PacmanBackend, FlatpakBackend]
 
 
 class BackendRegistry:

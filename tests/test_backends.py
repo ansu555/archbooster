@@ -1,8 +1,10 @@
 """Tests for the Backend seam: pacman backend delegation, availability
 detection, and the registry's aggregation / caching / update-routing."""
+import archbooster.core.backends.flatpak as flat
 import archbooster.core.backends.pacman as pac
 import archbooster.core.backends.registry as reg
 from archbooster.core.backends.base import Backend
+from archbooster.core.backends.flatpak import FlatpakBackend
 from archbooster.core.backends.pacman import PacmanBackend
 from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.scanner import Package
@@ -197,3 +199,22 @@ def test_registry_full_upgrade_reports_when_no_system_backend():
     r = _registry_with([app_only])
     out = list(r.full_upgrade())
     assert any("No system-layer backend" in line for line in out)
+
+
+# --------------------------------------------------------------------------- #
+# Cross-distro degrade (Phase 3): a non-Arch host with only Flatpak installed
+# --------------------------------------------------------------------------- #
+
+def test_flatpak_registered_as_a_known_backend():
+    assert FlatpakBackend in reg.BACKEND_CLASSES
+
+
+def test_registry_degrades_to_flatpak_only_on_non_arch_host(monkeypatch):
+    monkeypatch.setattr(reg, "BACKEND_CLASSES", [PacmanBackend, FlatpakBackend])
+    monkeypatch.setattr(pac.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        flat.shutil, "which",
+        lambda name: "/usr/bin/flatpak" if name == "flatpak" else None,
+    )
+    r = BackendRegistry()
+    assert [b.name for b in r.backends] == ["flatpak"]
