@@ -1,11 +1,11 @@
 """
 Background daemon — called by systemd timer.
-Runs a scan, caches results.
-(Notification hook lives here, wired up in a later phase.)
+Runs a scan, caches results, and fires a desktop notification.
 """
 from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.categorizer import categorize
 from archbooster.core.config import load_config
+from archbooster.core.notify import notify_send
 
 
 def run_daemon() -> None:
@@ -24,6 +24,10 @@ def run_daemon() -> None:
     if total == 0:
         return   # nothing to do
 
-    # TODO (phase 5): send desktop notification via notify-send
+    summary = f"{total} app update{'s' if total != 1 else ''} available"
+    body    = f"{len(critical)} critical" if critical else "None critical"
+    if cfg.notify:
+        notify_send(summary, body)
+
     print(f"[archbooster daemon] {total} update(s) available "
           f"({len(critical)} critical). Cache written.")

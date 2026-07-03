@@ -16,6 +16,9 @@ confirm         = false   # false: run pacman/yay non-interactively (your
                           #        selection in ArchBooster is the confirmation).
                           # true:  also show the package manager's own prompts
                           #        (best when running from a plain terminal).
+notify          = true    # desktop notification (via notify-send) when the
+                          # background daemon finds updates. No-ops quietly
+                          # if notify-send isn't installed.
 
 [categories]
 # Add package name prefixes to override auto-classification
@@ -33,6 +36,7 @@ class Config:
     aur_helper:     str       = "yay"
     check_interval: int       = 4
     confirm:        bool      = False
+    notify:         bool      = True
     extra_critical: list[str] = field(default_factory=list)
     extra_optional: list[str] = field(default_factory=list)
     ignored:        list[str] = field(default_factory=list)
@@ -49,6 +53,7 @@ def load_config() -> Config:
         aur_helper     = g.get("aur_helper",     "yay"),
         check_interval = g.get("check_interval", 4),
         confirm        = g.get("confirm",        False),
+        notify         = g.get("notify",         True),
         extra_critical = cat.get("extra_critical", []),
         extra_optional = cat.get("extra_optional", []),
         ignored        = ign.get("packages",      []),
