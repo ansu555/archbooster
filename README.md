@@ -240,6 +240,16 @@ archbooster/
 
 ---
 
+## Contributing
+
+All phases on the original roadmap are shipped — there's no active feature
+backlog. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for what's actually useful
+to work on (new backend ports, real-world testing on distros the maintainer
+can't run locally, AUR publishing once registration reopens) before opening
+a PR.
+
+---
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
