@@ -19,10 +19,10 @@ Usage:
         print(line)
 """
 import shutil
-import subprocess
 from collections.abc import Iterator
 
 from archbooster.core.categorizer import is_system
+from archbooster.core.procutil import stream_subprocess
 
 
 class Updater:
@@ -64,26 +64,7 @@ class Updater:
     # ------------------------------------------------------------------ #
 
     def _stream(self, cmd: list[str]) -> Iterator[str]:
-        yield f"[archbooster] Running: {' '.join(cmd)}\n"
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            # No TTY is attached here, so a prompt would otherwise block
-            # forever. DEVNULL makes any prompt read hit EOF instead of hanging.
-            stdin=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-        )
-        for line in process.stdout:
-            yield line
-        process.wait()
-
-        if process.returncode != 0:
-            yield f"[archbooster] ERROR: exited with code {process.returncode}\n"
-        else:
-            yield "[archbooster] Update complete.\n"
+        yield from stream_subprocess(cmd)
 
     def _noconfirm(self) -> list[str]:
         # Only skip the package manager's own prompts when confirm is off.

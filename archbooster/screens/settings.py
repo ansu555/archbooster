@@ -32,6 +32,7 @@ class SettingsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         cfg = load_config()
+        profiles = ", ".join(cfg.profiles.keys()) or "none"
         yield Header()
         yield Vertical(
             Label(f"[dim]AUR helper      :[/dim]  {cfg.aur_helper}"),
@@ -39,6 +40,11 @@ class SettingsScreen(Screen):
             Label(f"[dim]Extra critical  :[/dim]  {', '.join(cfg.extra_critical) or 'none'}"),
             Label(f"[dim]Extra optional  :[/dim]  {', '.join(cfg.extra_optional) or 'none'}"),
             Label(f"[dim]Ignored pkgs    :[/dim]  {', '.join(cfg.ignored) or 'none'}"),
+            Label(f"[dim]Snapshot        :[/dim]  "
+                  f"{'enabled' if cfg.snapshot_enabled else 'disabled'} ({cfg.snapshot_backend})"),
+            Label(f"[dim]Profiles        :[/dim]  {profiles}"),
+            Label(f"[dim]Auto-update     :[/dim]  "
+                  f"{'on — ' + cfg.auto_update_profile if cfg.auto_update and cfg.auto_update_profile else 'off'}"),
             Label(f"\n[dim]Config file: {CONFIG_FILE}[/dim]"),
             id="settings-box",
         )

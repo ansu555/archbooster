@@ -3,10 +3,14 @@ detection, and the registry's aggregation / caching / update-routing."""
 import archbooster.core.backends.flatpak as flat
 import archbooster.core.backends.pacman as pac
 import archbooster.core.backends.registry as reg
+from archbooster.core.backends.apt import AptBackend
 from archbooster.core.backends.base import Backend
+from archbooster.core.backends.brew import BrewBackend
+from archbooster.core.backends.dnf import DnfBackend
 from archbooster.core.backends.flatpak import FlatpakBackend
 from archbooster.core.backends.pacman import PacmanBackend
 from archbooster.core.backends.registry import BackendRegistry
+from archbooster.core.backends.snap import SnapBackend
 from archbooster.core.scanner import Package
 
 
@@ -71,6 +75,94 @@ def test_pacman_delegates_to_scanner_and_updater():
 
     assert list(b.full_upgrade()) == ["full\n"]
     assert b._updater.full is True
+
+
+# --------------------------------------------------------------------------- #
+# PacmanBackend.changelog — AUR PKGBUILD diff
+# --------------------------------------------------------------------------- #
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def _cursor_bin(source="AUR"):
+    return _pkg("cursor-bin", source)
+
+
+def test_changelog_returns_none_for_official_packages():
+    assert PacmanBackend().changelog(_pkg("firefox", "official")) is None
+
+
+def test_changelog_returns_none_on_network_error(monkeypatch):
+    def raise_url_error(*a, **k):
+        raise pac.urllib.error.URLError("no network")
+
+    monkeypatch.setattr(pac.urllib.request, "urlopen", raise_url_error)
+    assert PacmanBackend().changelog(_cursor_bin()) is None
+
+
+def test_changelog_without_local_cache_returns_remote_pkgbuild(monkeypatch, tmp_path):
+    monkeypatch.setattr(pac.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        pac.urllib.request, "urlopen",
+        lambda url, timeout=10: _FakeResponse(b"pkgver=2.0\n"),
+    )
+    log = PacmanBackend().changelog(_cursor_bin())
+    assert "No local PKGBUILD cached" in log
+    assert "pkgver=2.0" in log
+
+
+def test_changelog_diffs_against_yay_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(pac.Path, "home", staticmethod(lambda: tmp_path))
+    cache_dir = tmp_path / ".cache" / "yay" / "cursor-bin"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "PKGBUILD").write_text("pkgver=1.0\n")
+
+    monkeypatch.setattr(
+        pac.urllib.request, "urlopen",
+        lambda url, timeout=10: _FakeResponse(b"pkgver=2.0\n"),
+    )
+    log = PacmanBackend().changelog(_cursor_bin())
+    assert "-pkgver=1.0" in log
+    assert "+pkgver=2.0" in log
+
+
+def test_changelog_diffs_against_paru_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(pac.Path, "home", staticmethod(lambda: tmp_path))
+    cache_dir = tmp_path / ".cache" / "paru" / "clone" / "cursor-bin"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "PKGBUILD").write_text("pkgver=1.0\n")
+
+    monkeypatch.setattr(
+        pac.urllib.request, "urlopen",
+        lambda url, timeout=10: _FakeResponse(b"pkgver=2.0\n"),
+    )
+    log = PacmanBackend().changelog(_cursor_bin())
+    assert "-pkgver=1.0" in log
+    assert "+pkgver=2.0" in log
+
+
+def test_changelog_no_diff_when_pkgbuild_unchanged(monkeypatch, tmp_path):
+    monkeypatch.setattr(pac.Path, "home", staticmethod(lambda: tmp_path))
+    cache_dir = tmp_path / ".cache" / "yay" / "cursor-bin"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "PKGBUILD").write_text("pkgver=1.0\n")
+
+    monkeypatch.setattr(
+        pac.urllib.request, "urlopen",
+        lambda url, timeout=10: _FakeResponse(b"pkgver=1.0\n"),
+    )
+    assert PacmanBackend().changelog(_cursor_bin()) == "No PKGBUILD changes detected."
 
 
 # --------------------------------------------------------------------------- #
@@ -207,6 +299,16 @@ def test_registry_full_upgrade_reports_when_no_system_backend():
 
 def test_flatpak_registered_as_a_known_backend():
     assert FlatpakBackend in reg.BACKEND_CLASSES
+
+
+def test_apt_and_dnf_registered_as_known_backends():
+    assert AptBackend in reg.BACKEND_CLASSES
+    assert DnfBackend in reg.BACKEND_CLASSES
+
+
+def test_snap_and_brew_registered_as_known_backends():
+    assert SnapBackend in reg.BACKEND_CLASSES
+    assert BrewBackend in reg.BACKEND_CLASSES
 
 
 def test_registry_degrades_to_flatpak_only_on_non_arch_host(monkeypatch):
