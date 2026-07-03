@@ -1,4 +1,0 @@
-textual>=0.50.0
-
-[dev]
-pytest>=7.0

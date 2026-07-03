@@ -30,6 +30,7 @@ Issues     = "https://github.com/ansu555/archbooster/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+build = ["pyinstaller>=6.0"]
 
 [project.scripts]
 archbooster = "archbooster.main:main"
