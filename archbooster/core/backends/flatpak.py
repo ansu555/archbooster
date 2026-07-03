@@ -58,6 +58,31 @@ class FlatpakBackend(Backend):
         """Yield output lines while updating every installed Flatpak."""
         yield from self._stream(self._build_full_upgrade_command())
 
+    def list_installed(self) -> list[Package]:
+        """All installed Flatpak apps (runtimes excluded — users don't pick
+        runtimes, they ride along with their apps)."""
+        if not shutil.which("flatpak"):
+            return []
+        try:
+            result = subprocess.run(
+                ["flatpak", "list", "--app", "--columns=application,version"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+        installed: list[Package] = []
+        for line in result.stdout.strip().splitlines():
+            if not line:
+                continue
+            parts = line.split("\t")
+            name = parts[0].strip()
+            version = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "?"
+            installed.append(Package(
+                name=name, current=version, new=version,
+                source="Flatpak", priority="normal", status="up-to-date",
+            ))
+        return installed
+
     # ------------------------------------------------------------------ #
 
     def _build_update_command(self, names: list[str]) -> list[str]:

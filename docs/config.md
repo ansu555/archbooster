@@ -28,11 +28,21 @@ Both are matched with the same rule as the built-ins: exact match or
 |---|---|---|
 | `packages` | `[]` | Package names hidden from the update list entirely — filtered out before categorization, so they never show up in the TUI, `--scan`, or the daemon's notification count. |
 
+## `[update]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `default_scope` | `"safe"` | Scope of the one-command app update (`archbooster --update`, overridable per-run with `--scope`). `"safe"`: everything except the system layer — libraries ride along with the apps that need them, which is what keeps native packages from breaking. `"apps"`: user-facing apps only (packages shipping a `.desktop` launcher, plus every Flatpak/Snap app); stricter, but a native app whose update requires a newer library makes pacman stop with a dependency error rather than partially upgrade. Unrecognized values fall back to `"safe"`. |
+
+Either way, the system layer (kernel, drivers, firmware, bootloader, core
+libs) is **always** held back via `--ignore` — updating it takes an explicit
+full upgrade (`[F]` in the TUI).
+
 ## `[snapshot]`
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | Create a filesystem snapshot before a full system upgrade (`[F]` in the dashboard), so a broken upgrade has a rollback point. No-ops quietly if no snapshot tool is installed — this is a safety bonus, not a hard requirement. |
+| `enabled` | `true` | Create a filesystem snapshot before a full system upgrade (`[F]` in the dashboard) **and** before the native pass of an app update (which is a real `-Syu --ignore=…` sync, so libraries do move), so a broken run has a rollback point. No-ops quietly if no snapshot tool is installed — this is a safety bonus, not a hard requirement. |
 | `backend` | `"auto"` | Which tool to use: `"auto"` (snapper first, then timeshift), `"snapper"`, `"timeshift"`, or `"none"` to disable regardless of `enabled`. |
 
 Rolling back to a snapshot is done from the dashboard: press `[B]` (app-level)

@@ -29,6 +29,18 @@ extra_optional = []
 # Packages listed here are hidden from the update list entirely
 packages = []
 
+[update]
+# Scope of the one-command app update (`archbooster --update` and the
+# dashboard's default selection):
+#   "safe" — everything except the system layer (kernel/drivers/firmware/
+#            bootloader). Libraries ride along, which is what keeps native
+#            apps from breaking. Recommended.
+#   "apps" — user-facing apps only (packages shipping a .desktop launcher,
+#            plus all Flatpak/Snap apps). Stricter, but a native app whose
+#            update needs a newer library will make pacman stop with a
+#            dependency error rather than partially upgrade.
+default_scope = "safe"
+
 [snapshot]
 enabled = true    # create a filesystem snapshot (snapper or timeshift, whichever
                   # is installed) before a full system upgrade. No-ops quietly if
@@ -60,6 +72,7 @@ class Config:
     extra_critical:      list[str]      = field(default_factory=list)
     extra_optional:      list[str]      = field(default_factory=list)
     ignored:             list[str]      = field(default_factory=list)
+    update_scope:        str            = "safe"
     snapshot_enabled:    bool           = True
     snapshot_backend:    str            = "auto"
     profiles:            dict[str, list[str]] = field(default_factory=dict)
@@ -74,6 +87,7 @@ def load_config() -> Config:
     g    = raw.get("general",    {})
     cat  = raw.get("categories", {})
     ign  = raw.get("ignore",     {})
+    upd  = raw.get("update",     {})
     snap = raw.get("snapshot",   {})
     prof = raw.get("profiles",   {})
     auto = raw.get("automation", {})
@@ -85,6 +99,11 @@ def load_config() -> Config:
         extra_critical      = cat.get("extra_critical", []),
         extra_optional      = cat.get("extra_optional", []),
         ignored             = ign.get("packages",      []),
+        # Anything unrecognized falls back to "safe" — the update path treats
+        # the scope as a selection rule, so an invalid value must not widen it.
+        update_scope        = (upd.get("default_scope", "safe")
+                               if upd.get("default_scope") in ("safe", "apps")
+                               else "safe"),
         snapshot_enabled    = snap.get("enabled", True),
         snapshot_backend    = snap.get("backend", "auto"),
         profiles            = {k: v for k, v in prof.items() if isinstance(v, list)},

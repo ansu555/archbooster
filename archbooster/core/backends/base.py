@@ -62,6 +62,26 @@ class Backend(ABC):
         """True if `package` came from (and is updated by) this backend."""
         return package.source in self.sources
 
+    def update_apps(self, selected: list[Package], held: list[Package]) -> Iterator[str]:
+        """Apps-first update: update `selected`, hold back `held`.
+
+        Concrete by default: on an app-only backend (Flatpak/Snap/brew)
+        "holding a package back" is simply not naming it, so the default is
+        the plain selective update of the selected packages. Backends with a
+        system layer (pacman) override this to run a coherent full sync with
+        the hold list applied (`-Syu --ignore=…`).
+        """
+        return self.update([p.name for p in selected])
+
+    def list_installed(self) -> list[Package]:
+        """Every installed package this backend manages, as up-to-date rows.
+
+        Powers the inventory view ("show me everything, not a blank list").
+        Concrete by default — returning [] just means this backend's installed
+        set doesn't appear in the inventory yet, which degrades gracefully.
+        """
+        return []
+
     def changelog(self, package: Package) -> str | None:
         """Return a human-readable changelog/diff for `package`'s pending
         update, or None if this backend has no way to produce one.

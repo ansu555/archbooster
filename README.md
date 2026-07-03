@@ -20,16 +20,22 @@ none of them gives you:
 
 - **One list across all of them.** pacman, AUR, and Flatpak updates in a
   single screen instead of three terminals.
+- **One command that never touches your system layer.** `archbooster
+  --update` (or `[ENTER]` in the TUI) updates your apps — and the libraries
+  they need — while the kernel, drivers, firmware, and bootloader are
+  **always held back** via pacman's own `--ignore` mechanism. Updating the
+  system layer takes an explicit full upgrade, with a snapshot taken first.
 - **A safety guardrail.** ArchBooster knows the difference between an
   **app** (Firefox, a Flatpak, an AUR `-bin` package) and the **system**
-  (kernel, mesa/nvidia drivers, glibc, systemd). Cherry-picking individual
-  packages is safe for apps — but a *partial* upgrade of the system layer is
-  exactly how a rolling-release install breaks. ArchBooster locks
-  system-layer packages out of selective updates entirely; they can only be
-  bumped together via a full `-Syu`.
-- **Categorization, history, and a background check** — updates are sorted
-  🔴 critical / 🟡 normal / 🟢 optional, every run is logged, and a systemd
-  timer can check on a schedule and notify you without auto-updating anything.
+  (kernel, mesa/nvidia drivers, glibc, systemd). A *partial* upgrade of the
+  system layer is exactly how a rolling-release install breaks, so system
+  packages can never be cherry-picked — they only move together, via a full
+  `-Syu`.
+- **Categorization, filters, history, and a background check** — packages
+  are sorted into user vocabulary (Apps / CLI & libraries / Drivers &
+  firmware / Kernel / Core system / Fonts & themes) and filterable by type
+  and by package manager; every run is logged, and a systemd timer can check
+  on a schedule and notify you without auto-updating anything.
 
 That combination — unification + the app/system guardrail — is the thing no
 single command does.
@@ -40,9 +46,20 @@ single command does.
 
 - Unified scan across **pacman + AUR (yay/paru), Flatpak, apt, dnf, Snap, and
   Homebrew**, grouped by source
+- **Apps-first one-command update** (`archbooster --update` / `[ENTER]`):
+  updates the app layer via `-Syu --ignore=<system packages>` — a coherent
+  sync in which libraries ride along, but kernel/drivers/firmware/bootloader
+  are always held back
+- **Type & source filters** (`TAB` / `M`) — Apps, CLI & libraries, Drivers &
+  firmware, Kernel, Core system, Fonts & themes; or a single package manager.
+  User-facing apps are detected by their `.desktop` launchers (Flatpak/Snap
+  count automatically)
+- **Never a blank list** — up-to-date packages are shown too, in the TUI and
+  in `--scan`, so "no updates" reads as a healthy inventory instead of an
+  empty screen
 - 🔴 Critical / 🟡 Normal / 🟢 Optional categorization (configurable overrides,
   with distro-specific system-package lists for apt/dnf too)
-- Select individual packages to update — never forced, system packages locked
+- Select individual packages to update — never forced, system packages held
 - Live streaming output during update (real pacman/yay/flatpak/apt/dnf output)
 - **Changelog / PKGBUILD diff viewer** (`C`) — see what actually changed in an
   AUR package (PKGBUILD diff) or a Flatpak (OSTree commit log) before updating
@@ -118,7 +135,10 @@ chmod +x archbooster-linux-x86_64
 | Command                    | Action                              |
 |-----------------------------|--------------------------------------|
 | `archbooster`               | Open the full TUI dashboard         |
-| `archbooster --scan`        | Print available updates and exit    |
+| `archbooster --update`      | **The one command**: update the app layer now; system layer always held back |
+| `archbooster --update --scope apps` | Same, but user-facing apps only (default scope is `safe`; see config) |
+| `archbooster --scan`        | Print pending updates + inventory summary (never blank) |
+| `archbooster --scan --all`  | Also list every up-to-date package  |
 | `archbooster --daemon`      | Run one background check (systemd)  |
 
 ### Keybindings (inside TUI)
@@ -128,7 +148,10 @@ chmod +x archbooster-linux-x86_64
 | `A`      | Select all packages           |
 | `N`      | Deselect all                  |
 | `I`      | Invert selection               |
-| `Enter`  | Update selected (app layer)   |
+| `U`      | Select user-facing apps only  |
+| `TAB`    | Cycle type filter (Apps / CLI / Drivers / Kernel / System / Fonts) |
+| `M`      | Cycle source filter (pacman / AUR / Flatpak / …) |
+| `Enter`  | Update selected (app layer; system always held back) |
 | `F`      | Full system upgrade (snapshot first, if enabled) |
 | `R`      | Re-scan for updates           |
 | `C`      | Changelog / PKGBUILD diff for the highlighted row |
@@ -165,6 +188,12 @@ extra_optional = []      # extra package name prefixes to force "optional"
 
 [ignore]
 packages = []            # packages to hide from the update list entirely
+
+[update]
+default_scope = "safe"   # scope of `archbooster --update` / [ENTER]:
+                          # "safe" = everything except the system layer
+                          #          (libraries ride along — recommended)
+                          # "apps" = user-facing apps only
 
 [snapshot]
 enabled = true           # snapshot (snapper/timeshift) before a full upgrade
@@ -237,6 +266,9 @@ archbooster/
 - [x] Phase 6 — Changelog/diff viewer, snapshot + rollback, apt/dnf/Snap/
       Homebrew backends, update profiles + opt-in auto-update — see
       [the roadmap doc](docs/ROADMAP.md) for details
+- [x] Phase 7 — Apps-first update model: one command (`--update`) that never
+      touches the system layer (`-Syu --ignore` under the hood), type/source
+      filters, user-facing-app detection, and a never-blank inventory view
 
 ---
 

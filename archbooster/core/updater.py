@@ -2,13 +2,22 @@
 Runs the actual package update via yay / paru / pacman.
 Streams stdout/stderr line-by-line so the TUI can show live progress.
 
-Two update paths, deliberately separated:
+Three update paths:
 
-  run(names)          — selective APP-layer update. Installs only the named
+  run_apps(selected, held) — the apps-first path (Phase 7, the default flow):
+                        a full `-Syu` with `--ignore=<held>`, pacman's own
+                        sanctioned hold mechanism. Selected apps update along
+                        with whatever libraries they need; everything held —
+                        always including the system layer — is left alone.
+                        This replaced the `-S` cherry-pick as the main path
+                        because checkupdates syncs a *temporary* DB: `-S`
+                        against the real (stale) sync DB could silently no-op.
+  run(names)          — legacy selective update. Installs only the named
                         packages (`-S`, no `-y`, so it never syncs the whole
                         system). System-layer packages are refused here so a
                         partial upgrade of the OS/drivers can't happen — see
-                        `archbooster.core.categorizer.is_system`.
+                        `archbooster.core.categorizer.is_system`. Still used
+                        by the daemon's auto-update.
   run_full_upgrade()  — the correct way to update the SYSTEM layer: a full
                         `-Syu`. Never cherry-picks.
 
@@ -56,6 +65,38 @@ class Updater:
         cmd = self._build_command(allowed)
         yield from self._stream(cmd)
 
+    def run_apps(self, selected: list[str], held: list[str]) -> Iterator[str]:
+        """Yield output while updating `selected` via `-Syu --ignore=<held>`.
+
+        `held` must contain every other pending update (the caller — the
+        registry — computes it from the scan), so the sync only advances the
+        packages the user chose plus their dependencies. Any system-layer
+        package that arrives in `selected` is forced into the hold list — the
+        apps-first promise is that this path never touches kernel/drivers/
+        firmware/bootloader, no matter what the caller passes.
+        """
+        if not selected:
+            yield "[archbooster] Nothing selected to update.\n"
+            return
+
+        blocked = [n for n in selected if is_system(n)]
+        allowed = [n for n in selected if not is_system(n)]
+        # dict.fromkeys: dedupe while keeping a stable order for the command line
+        held = list(dict.fromkeys(list(held) + blocked))
+
+        if blocked:
+            yield (
+                "[archbooster] System packages stay held (use Full system "
+                f"upgrade to update them): {', '.join(blocked)}\n"
+            )
+        if not allowed:
+            yield "[archbooster] Nothing to update — only system packages were selected.\n"
+            return
+        if held:
+            yield f"[archbooster] Holding back: {', '.join(held)}\n"
+
+        yield from self._stream(self._build_apps_command(held))
+
     def run_full_upgrade(self) -> Iterator[str]:
         """Yield lines of output as a full system upgrade (`-Syu`) runs."""
         cmd = self._build_full_upgrade_command()
@@ -78,6 +119,19 @@ class Updater:
                 return [helper, "-S", "--needed"] + self._noconfirm() + names
         if shutil.which("pacman"):
             return ["sudo", "pacman", "-S", "--needed"] + self._noconfirm() + names
+        raise RuntimeError("No package manager found (yay, paru, or pacman)")
+
+    def _build_apps_command(self, held: list[str]) -> list[str]:
+        # A real `-Syu` (fresh databases, coherent dependency solve) with the
+        # hold list riding on `--ignore`. With no holds this degenerates to a
+        # plain full upgrade, which is correct: it means nothing pending was
+        # deselected and no system updates exist.
+        ignore = [f"--ignore={','.join(held)}"] if held else []
+        for helper in ("yay", "paru"):
+            if shutil.which(helper):
+                return [helper, "-Syu", *ignore] + self._noconfirm()
+        if shutil.which("pacman"):
+            return ["sudo", "pacman", "-Syu", *ignore] + self._noconfirm()
         raise RuntimeError("No package manager found (yay, paru, or pacman)")
 
     def _build_full_upgrade_command(self) -> list[str]:

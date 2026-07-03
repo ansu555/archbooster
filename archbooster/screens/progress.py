@@ -140,10 +140,18 @@ class ProgressScreen(Screen):
         Binding("escape", "go_back", "Back", show=True),
     ]
 
-    def __init__(self, packages: list[Package], full_upgrade: bool = False) -> None:
+    def __init__(self, packages: list[Package], full_upgrade: bool = False,
+                 pending: list[Package] | None = None) -> None:
         super().__init__()
         self._packages     = packages
         self._full_upgrade = full_upgrade
+        # The full pending-update list from the scan. When given (the
+        # dashboard always passes it), app updates run as ONE batched
+        # apps-first pass per backend (`-Syu --ignore=<pending − selected>`)
+        # instead of per-package cherry-picks — holds can only be computed
+        # from the full pending set. None falls back to the legacy
+        # per-package path (kept for any external caller).
+        self._pending      = pending
         self._history      = History()
         self._completed    = 0
         self._failed       = 0
@@ -163,15 +171,13 @@ class ProgressScreen(Screen):
         )
         yield Label("── Live output ─────────────────────────────────", id="log-header")
         yield RichLog(highlight=False, markup=True, id="live-log")
-        yield Label(
-            (
-                "Full system upgrade (pacman -Syu)…  "
-                if self._full_upgrade
-                else f"Updating {len(self._packages)} package(s)…  "
-            )
-            + "Press [ESC] to go back after done.",
-            id="done-bar"
-        )
+        if self._full_upgrade:
+            headline = "Full system upgrade (pacman -Syu)…  "
+        elif self._pending is not None:
+            headline = f"Updating {len(self._packages)} app(s) — system layer held back…  "
+        else:
+            headline = f"Updating {len(self._packages)} package(s)…  "
+        yield Label(headline + "Press [ESC] to go back after done.", id="done-bar")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -191,9 +197,11 @@ class ProgressScreen(Screen):
             await self._sudo_authenticated.wait()
             prompt.remove_class("visible")
 
+        snapshot = SnapshotManager(cfg.snapshot_backend) if cfg.snapshot_enabled else None
         if self._full_upgrade:
-            snapshot = SnapshotManager(cfg.snapshot_backend) if cfg.snapshot_enabled else None
             await self._run_full_upgrade(log, registry, snapshot)
+        elif self._pending is not None:
+            await self._run_app_update(log, registry, snapshot)
         else:
             await self._run_selective(log, registry)
 
@@ -252,6 +260,42 @@ class ProgressScreen(Screen):
                 status="success" if success else "failed",
             )
 
+            if success:
+                self._completed += 1
+                self._set_pkg_status(pkg.name, STATUS_DONE)
+            else:
+                self._failed += 1
+                self._set_pkg_status(pkg.name, STATUS_FAILED)
+
+    async def _run_app_update(
+        self, log: RichLog, registry: BackendRegistry, snapshot: SnapshotManager | None,
+    ) -> None:
+        """The apps-first update: one batched pass per backend, holding back
+        everything pending that isn't selected — the system layer always is."""
+        for pkg in self._packages:
+            self._set_pkg_status(pkg.name, STATUS_RUNNING)
+        log.write("\n[bold cyan]── App update (system layer held back) ──[/bold cyan]")
+
+        success = True
+        try:
+            async for line in stream_lines(
+                lambda: registry.update_apps(
+                    self._packages, self._pending or [], snapshot=snapshot,
+                )
+            ):
+                if self._write_line(log, line):
+                    success = False
+        except Exception as e:
+            safe_log(log, f"Exception: {e}", "red")
+            success = False
+
+        for pkg in self._packages:
+            self._history.record(
+                package=pkg.name,
+                old_ver=pkg.current,
+                new_ver=pkg.new,
+                status="success" if success else "failed",
+            )
             if success:
                 self._completed += 1
                 self._set_pkg_status(pkg.name, STATUS_DONE)

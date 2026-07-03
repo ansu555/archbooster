@@ -1,5 +1,19 @@
 """
-DashboardScreen — the main update checklist (Phase 2).
+DashboardScreen — the main update checklist (Phase 2, reworked in Phase 7).
+
+Phase 7 (apps-first) additions:
+  * Selection is persisted in a set keyed by (source, name), so it survives
+    filter changes and re-renders instead of living only inside row widgets.
+  * [TAB] cycles a package-type filter (apps / cli / drivers / kernel /
+    system / fonts-themes), [S] cycles a source (package-manager) filter.
+  * [U] preset selects user-facing apps only.
+  * The list is never blank: up-to-date packages are shown (capped) below the
+    pending updates, so "no updates" reads as "here's your system, healthy"
+    instead of an empty room.
+  * [ENTER] routes through the batched apps-first update path
+    (`-Syu --ignore=<held>`), passing the full pending list so the progress
+    screen can compute holds.
+
 Compatible with Textual 0.50+
 """
 from __future__ import annotations
@@ -13,6 +27,7 @@ from textual.widgets import Footer, Header, Label, Static
 
 from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.categorizer import categorize
+from archbooster.core.desktopdb import gui_package_names
 from archbooster.core.profiles import matches_profile
 from archbooster.core.scanner import Package
 
@@ -29,6 +44,23 @@ PRIORITY_COLOR = {
 SOURCE_ORDER = {
     "official": 0, "AUR": 1, "Flatpak": 2, "apt": 3, "dnf": 4, "snap": 5, "brew": 6,
 }
+
+# Package-type filter cycle ([TAB]) — user vocabulary, matching
+# categorizer.display_category. None = no filter.
+CATEGORY_LABELS = {
+    "apps":         "Apps",
+    "cli":          "CLI & libraries",
+    "drivers":      "Drivers & firmware",
+    "kernel":       "Kernel",
+    "system":       "Core system",
+    "fonts-themes": "Fonts & themes",
+}
+CATEGORY_CYCLE = list(CATEGORY_LABELS)
+
+# Up-to-date rows are plain Labels (1 widget each), but a big Arch install
+# still has 1000+ packages — mounting them all would make the TUI crawl.
+# Cap the section; the CLI (`archbooster --scan --all`) has the full list.
+UPTODATE_CAP = 400
 
 
 class PackageRow(Static):
@@ -51,8 +83,9 @@ class PackageRow(Static):
                  locked: bool = False) -> None:
         super().__init__()
         self.pkg = pkg
-        # A locked row is a system-layer package. It can never be selected for a
-        # partial (cherry-pick) update — it may only go through a full -Syu.
+        # A locked row is a system-layer package. It can never be selected for
+        # the apps-first update — it is always held back (`--ignore`) and only
+        # moves via a full upgrade [F].
         self.locked = locked
         self._selected = selected and not locked
         if locked:
@@ -66,8 +99,10 @@ class PackageRow(Static):
         self._check_label = Label(self._check_glyph(), classes="row-check")
         yield self._check_label
         name = f"[{color}]●[/{color}] {self.pkg.name}"
+        if self.pkg.category:
+            name += f"  [dim]({CATEGORY_LABELS.get(self.pkg.category, self.pkg.category)})[/dim]"
         if self.locked:
-            name += "  [dim](system · Full upgrade only)[/dim]"
+            name += "  [dim](held · Full upgrade only)[/dim]"
         yield Label(name, classes="row-name")
         yield Label(f"{self.pkg.current[:13]} → {self.pkg.new[:13]}", classes="row-version")
         yield Label(self.pkg.source, classes="row-source")
@@ -97,6 +132,24 @@ class PackageRow(Static):
         self._check_label.update(self._check_glyph())
 
 
+class UpToDateRow(Label):
+    """One installed-and-current package — a single lightweight widget, not a
+    4-label PackageRow, because there can be over a thousand of these."""
+
+    DEFAULT_CSS = """
+    UpToDateRow {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, pkg: Package) -> None:
+        super().__init__(
+            f" [green]✓[/green]  {pkg.name}  [dim]{pkg.current[:20]} · {pkg.source}[/dim]"
+        )
+
+
 class SummaryBar(Static):
     DEFAULT_CSS = """
     SummaryBar {
@@ -105,7 +158,8 @@ class SummaryBar(Static):
         background: $surface;
     }
     """
-    def update_counts(self, packages: list) -> None:
+    def update_counts(self, packages: list, uptodate: int = 0,
+                      filter_desc: str = "") -> None:
         critical = sum(1 for p in packages if p.priority == "critical")
         normal   = sum(1 for p in packages if p.priority == "normal")
         optional = sum(1 for p in packages if p.priority == "optional")
@@ -113,8 +167,14 @@ class SummaryBar(Static):
         if normal:   parts.append(f"[yellow]● {normal} app[/yellow]")
         if optional: parts.append(f"[green]● {optional} optional[/green]")
         if critical:
-            parts.append(f"[red]● {critical} system[/red] [dim](press F for full upgrade)[/dim]")
-        self.update("   ".join(parts) if parts else "[dim]All packages up to date[/dim]")
+            parts.append(f"[red]● {critical} system held[/red] [dim](press F for full upgrade)[/dim]")
+        if not parts:
+            parts.append("[green]✓ All packages up to date[/green]")
+        if uptodate:
+            parts.append(f"[dim]· {uptodate} up to date[/dim]")
+        if filter_desc:
+            parts.append(f"[bold]· Filter: {filter_desc}[/bold]")
+        self.update("   ".join(parts))
 
 
 class StatusBar(Static):
@@ -130,15 +190,15 @@ class StatusBar(Static):
         if total == 0:
             self.update(
                 "[dim]No app updates — press [F] for full system upgrade, "
-                "[R] to rescan[/dim]"
+                "[R] to rescan, [TAB]/[M] to filter the list[/dim]"
             )
             return
         col = "green" if selected > 0 else "red"
         self.update(
             f"[{col}]Selected: {selected}/{total}[/{col}]"
-            f"   [dim][SPACE] Toggle  [A] All  [N] None  [I] Invert  "
-            f"[ENTER] Update apps  [F] Full upgrade  [R] Rescan  "
-            f"[C] Changelog  [P] Profile[/dim]"
+            f"   [dim][SPACE] Toggle  [U] Apps only  [A] All  [N] None  "
+            f"[ENTER] Update  [F] Full upgrade  [TAB] Type  [M] Source  "
+            f"[R] Rescan  [C] Changelog  [P] Profile[/dim]"
         )
 
 
@@ -198,14 +258,19 @@ class DashboardScreen(Screen):
     """
 
     BINDINGS = [
-        Binding("a",     "select_all",  "All",    show=False),
-        Binding("n",     "select_none", "None",   show=False),
-        Binding("i",     "invert",       "Invert",       show=False),
+        Binding("a",     "select_all",   "All",       show=False),
+        Binding("n",     "select_none",  "None",      show=False),
+        Binding("i",     "invert",       "Invert",    show=False),
+        Binding("u",     "select_apps",  "Apps only", show=False),
         Binding("enter", "update",       "Update apps",  show=False),
         Binding("f",     "full_upgrade", "Full upgrade", show=False),
         Binding("r",     "rescan",       "Rescan",       show=False),
         Binding("c",     "show_changelog", "Changelog",  show=False),
-        Binding("p",     "cycle_profile", "Profile",     show=False),
+        Binding("p",     "cycle_profile",  "Profile",    show=False),
+        Binding("tab",   "cycle_category", "Type filter",   show=False),
+        # `s` is Settings at app level, so the source/package-manager filter
+        # rides on `m` (as in "manager").
+        Binding("m",     "cycle_source",   "Source filter", show=False),
         Binding("j",     "cursor_down", "",       show=False),
         Binding("k",     "cursor_up",   "",       show=False),
         Binding("space", "toggle_row",  "Toggle", show=False),
@@ -215,8 +280,15 @@ class DashboardScreen(Screen):
 
     def __init__(self) -> None:
         super().__init__()
-        self._packages: list = []
+        self._packages:  list[Package] = []   # pending updates
+        self._installed: list[Package] = []   # up-to-date inventory
+        # Selection lives here, not in the row widgets, so it survives filter
+        # re-renders; keyed (source, name) since the same name can exist in
+        # two backends (e.g. an "openssl" formula in brew and in pacman).
+        self._selected: set[tuple[str, str]] = set()
         self._cursor: int = 0
+        self._category_filter: str | None = None
+        self._source_filter:   str | None = None
         self._profile_patterns: dict[str, list[str]] = {}
         self._active_profile_idx: int = -1  # -1 = no profile filter active
 
@@ -231,6 +303,8 @@ class DashboardScreen(Screen):
     def on_mount(self) -> None:
         self._start_scan()
 
+    # ---- scanning --------------------------------------------------- #
+
     def _start_scan(self, force: bool = False) -> None:
         pkg_list = self.query_one("#pkg-list", PackageList)
         pkg_list.remove_children()
@@ -244,44 +318,107 @@ class DashboardScreen(Screen):
         self._profile_patterns = cfg.profiles
         self._active_profile_idx = -1
 
-        def _scan() -> list:
-            found = [p for p in BackendRegistry().scan(force=force)
+        def _scan() -> tuple[list[Package], list[Package]]:
+            registry = BackendRegistry()
+            gui = gui_package_names()
+            found = [p for p in registry.scan(force=force)
                      if p.name not in cfg.ignored]
-            return categorize(
+            found = categorize(
                 found,
                 extra_critical=cfg.extra_critical,
                 extra_optional=cfg.extra_optional,
+                gui_packages=gui,
             )
-        packages = await asyncio.get_event_loop().run_in_executor(None, _scan)
+            pending_keys = {(p.source, p.name) for p in found}
+            installed = [
+                p for p in registry.list_installed()
+                if p.name not in cfg.ignored
+                and (p.source, p.name) not in pending_keys
+            ]
+            installed = categorize(
+                installed,
+                extra_critical=cfg.extra_critical,
+                extra_optional=cfg.extra_optional,
+                gui_packages=gui,
+            )
+            return found, installed
+
+        packages, installed = await asyncio.get_event_loop().run_in_executor(None, _scan)
         # Group by source (Official / AUR / Flatpak) so a mixed system reads
         # as one unified list; within each group, app layer first (actionable),
-        # system layer last (locked / full-upgrade only).
+        # system layer last (held / full-upgrade only).
         order = {"normal": 0, "optional": 1, "critical": 2}
         packages.sort(
             key=lambda p: (SOURCE_ORDER.get(p.source, 99), order[p.priority], p.name)
         )
-        self._render_packages(packages)
+        installed.sort(key=lambda p: (SOURCE_ORDER.get(p.source, 99), p.name))
+        self._packages  = packages
+        self._installed = installed
+        # Default selection: the whole safe (non-system) layer — one [ENTER]
+        # is the one command. [U] narrows it to user-facing apps only.
+        self._selected = {
+            (p.source, p.name) for p in packages if p.priority != "critical"
+        }
+        self._render_list()
 
-    def _render_packages(self, packages: list) -> None:
-        self._packages = packages
+    # ---- rendering --------------------------------------------------- #
+
+    def _visible(self, packages: list[Package]) -> list[Package]:
+        result = packages
+        if self._category_filter:
+            result = [p for p in result if p.category == self._category_filter]
+        if self._source_filter:
+            result = [p for p in result if p.source == self._source_filter]
+        return result
+
+    def _filter_desc(self) -> str:
+        parts = []
+        if self._category_filter:
+            parts.append(CATEGORY_LABELS.get(self._category_filter, self._category_filter))
+        if self._source_filter:
+            parts.append(self._source_filter)
+        return " · ".join(parts)
+
+    def _render_list(self) -> None:
         pkg_list = self.query_one("#pkg-list", PackageList)
         pkg_list.remove_children()
-        if not packages:
-            pkg_list.mount(Label("  [green]✓[/green]  All packages are up to date!"))
-            self.query_one("#summary-bar", SummaryBar).update_counts([])
-            self.query_one("#status-bar",  StatusBar).update_status(0, 0)
-            return
+
+        updates   = self._visible(self._packages)
+        uptodate  = self._visible(self._installed)
+
+        if not updates and not uptodate:
+            hint = " matching this filter" if self._filter_desc() else ""
+            pkg_list.mount(Label(f"  [dim]No packages{hint}.[/dim]"))
         last_source = None
-        for pkg in packages:
+        for pkg in updates:
             if pkg.source != last_source:
                 pkg_list.mount(SourceHeader(pkg.source))
                 last_source = pkg.source
             locked = pkg.priority == "critical"
-            pkg_list.mount(PackageRow(pkg, selected=not locked, locked=locked))
+            pkg_list.mount(PackageRow(
+                pkg,
+                selected=(pkg.source, pkg.name) in self._selected,
+                locked=locked,
+            ))
+        if uptodate:
+            pkg_list.mount(SourceHeader(f"Up to date ({len(uptodate)})"))
+            for pkg in uptodate[:UPTODATE_CAP]:
+                pkg_list.mount(UpToDateRow(pkg))
+            if len(uptodate) > UPTODATE_CAP:
+                pkg_list.mount(Label(
+                    f"  [dim]… and {len(uptodate) - UPTODATE_CAP} more — "
+                    f"run `archbooster --scan --all` for the full list[/dim]"
+                ))
+
         self._cursor = 0
         self._highlight_cursor()
         self._refresh_status()
-        self.query_one("#summary-bar", SummaryBar).update_counts(packages)
+        self.query_one("#summary-bar", SummaryBar).update_counts(
+            self._packages, uptodate=len(self._installed),
+            filter_desc=self._filter_desc(),
+        )
+
+    # ---- cursor / rows ----------------------------------------------- #
 
     def _rows(self) -> list:
         return list(self.query(PackageRow))
@@ -305,23 +442,88 @@ class DashboardScreen(Screen):
             self._cursor = max(self._cursor - 1, 0)
             self._highlight_cursor()
 
+    # ---- selection ---------------------------------------------------- #
+
+    def _sync_selection(self, row) -> None:
+        key = (row.pkg.source, row.pkg.name)
+        if row.selected:
+            self._selected.add(key)
+        else:
+            self._selected.discard(key)
+
     def action_toggle_row(self) -> None:
         rows = self._rows()
         if rows:
-            rows[self._cursor].toggle()
+            row = rows[self._cursor]
+            row.toggle()
+            self._sync_selection(row)
             self._refresh_status()
 
     def action_select_all(self) -> None:
-        for row in self._rows(): row.select(True)
+        for row in self._rows():
+            row.select(True)
+            self._sync_selection(row)
         self._refresh_status()
 
     def action_select_none(self) -> None:
-        for row in self._rows(): row.select(False)
+        for row in self._rows():
+            row.select(False)
+            self._sync_selection(row)
         self._refresh_status()
 
     def action_invert(self) -> None:
-        for row in self._rows(): row.toggle()
+        for row in self._rows():
+            row.toggle()
+            self._sync_selection(row)
         self._refresh_status()
+
+    def action_select_apps(self) -> None:
+        """[U] preset — the literal 'user-facing apps only' selection. Applies
+        to all pending updates, not just the currently visible (filtered) rows."""
+        self._selected = {
+            (p.source, p.name) for p in self._packages
+            if p.priority != "critical" and p.category == "apps"
+        }
+        for row in self._rows():
+            row.select((row.pkg.source, row.pkg.name) in self._selected)
+        self.notify(f"Selected {len(self._selected)} user-facing app(s)",
+                    severity="information")
+        self._refresh_status()
+
+    # ---- filters ------------------------------------------------------ #
+
+    def _present_categories(self) -> list[str]:
+        present = {p.category for p in self._packages} | {p.category for p in self._installed}
+        return [c for c in CATEGORY_CYCLE if c in present]
+
+    def _present_sources(self) -> list[str]:
+        present = {p.source for p in self._packages} | {p.source for p in self._installed}
+        return sorted(present, key=lambda s: SOURCE_ORDER.get(s, 99))
+
+    @staticmethod
+    def _cycle(current, options):
+        """None → options[0] → options[1] → … → None."""
+        if not options:
+            return None
+        if current not in options:
+            return options[0]
+        idx = options.index(current) + 1
+        return options[idx] if idx < len(options) else None
+
+    def action_cycle_category(self) -> None:
+        self._category_filter = self._cycle(self._category_filter, self._present_categories())
+        label = CATEGORY_LABELS.get(self._category_filter, "All types")
+        self.notify(f"Type filter: {label if self._category_filter else 'All types'}",
+                    severity="information")
+        self._render_list()
+
+    def action_cycle_source(self) -> None:
+        self._source_filter = self._cycle(self._source_filter, self._present_sources())
+        self.notify(f"Source filter: {self._source_filter or 'All sources'}",
+                    severity="information")
+        self._render_list()
+
+    # ---- actions ------------------------------------------------------ #
 
     def action_rescan(self) -> None:
         self._start_scan(force=True)
@@ -330,18 +532,22 @@ class DashboardScreen(Screen):
         self._start_scan()
 
     def action_update(self) -> None:
-        # r.selected already excludes locked (system) rows — this can only ever
-        # be an app-layer, partial-upgrade-safe update.
-        selected = [r.pkg for r in self._rows() if r.selected]
+        # Selection is taken from the persisted set (hidden-but-selected rows
+        # still count) and re-filtered against the system layer, so this can
+        # only ever be an app-layer, hold-the-system update.
+        selected = [
+            p for p in self._packages
+            if (p.source, p.name) in self._selected and p.priority != "critical"
+        ]
         if not selected:
             self.notify("No app packages selected!", severity="warning")
             return
         from archbooster.screens.progress import ProgressScreen
-        self.app.push_screen(ProgressScreen(selected))
+        self.app.push_screen(ProgressScreen(selected, pending=self._packages))
 
     def action_cycle_profile(self) -> None:
         """Cycle through configured [profiles] entries, auto-selecting the
-        rows each one matches (never a locked/system row). Cycling past the
+        packages each one matches (never a system package). Cycling past the
         last profile clears the filter back to "everything selected"."""
         names = list(self._profile_patterns.keys())
         if not names:
@@ -353,15 +559,20 @@ class DashboardScreen(Screen):
         self._active_profile_idx += 1
         if self._active_profile_idx >= len(names):
             self._active_profile_idx = -1
-            for row in self._rows():
-                row.select(not row.locked)
+            self._selected = {
+                (p.source, p.name) for p in self._packages if p.priority != "critical"
+            }
             self.notify("Profile filter cleared — all apps selected", severity="information")
         else:
             name = names[self._active_profile_idx]
             patterns = self._profile_patterns[name]
-            for row in self._rows():
-                row.select(matches_profile(row.pkg.name, patterns) and not row.locked)
+            self._selected = {
+                (p.source, p.name) for p in self._packages
+                if p.priority != "critical" and matches_profile(p.name, patterns)
+            }
             self.notify(f"Profile: {name}", severity="information")
+        for row in self._rows():
+            row.select((row.pkg.source, row.pkg.name) in self._selected)
         self._refresh_status()
 
     def action_show_changelog(self) -> None:
@@ -374,7 +585,7 @@ class DashboardScreen(Screen):
         self.app.push_screen(ChangelogScreen(pkg, backend))
 
     def action_full_upgrade(self) -> None:
-        system_pkgs = [r.pkg for r in self._rows() if r.locked]
+        system_pkgs = [p for p in self._packages if p.priority == "critical"]
         if not system_pkgs:
             self.notify("No system updates pending.", severity="information")
             return
@@ -382,7 +593,10 @@ class DashboardScreen(Screen):
         self.app.push_screen(ProgressScreen(system_pkgs, full_upgrade=True))
 
     def _refresh_status(self) -> None:
-        # Only app-layer rows are selectable, so the counter reflects those.
-        selectable = [r for r in self._rows() if not r.locked]
-        selected   = sum(1 for r in selectable if r.selected)
+        # Counter over the whole app layer (not just visible rows), since the
+        # selection set is global across filters.
+        selectable = [p for p in self._packages if p.priority != "critical"]
+        selected   = sum(
+            1 for p in selectable if (p.source, p.name) in self._selected
+        )
         self.query_one("#status-bar", StatusBar).update_status(selected, len(selectable))

@@ -19,6 +19,14 @@ class Package:
     new:      str
     source:   str    # "official" | "AUR" | "Flatpak" | ...
     priority: str    # "critical" | "normal" | "optional"  (set by categorizer)
+    # status defaults to "update" so cached pending.json files written before
+    # this field existed still deserialize; "up-to-date" rows come only from
+    # Backend.list_installed().
+    status:   str = "update"      # "update" | "up-to-date"
+    # Display taxonomy in user vocabulary ("drivers", not "critical") — set by
+    # categorizer.categorize(); purely presentational, never a safety input.
+    category: str = ""            # "apps" | "cli" | "drivers" | "kernel"
+                                  # | "system" | "fonts-themes"
 
 
 class Scanner:

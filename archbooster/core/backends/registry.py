@@ -69,6 +69,15 @@ class BackendRegistry:
         self._save_cache(packages)
         return packages
 
+    def list_installed(self) -> list[Package]:
+        """Every installed package across all available backends, as
+        up-to-date rows. Uncached — local package-list queries (`pacman -Q`,
+        `flatpak list`) are milliseconds, unlike the network-bound scan."""
+        installed: list[Package] = []
+        for backend in self.backends:
+            installed += backend.list_installed()
+        return installed
+
     # ---- updating -------------------------------------------------- #
 
     def backend_for(self, package: Package) -> Backend | None:
@@ -92,6 +101,50 @@ class BackendRegistry:
             by_backend.setdefault(id(backend), (backend, []))[1].append(pkg.name)
         for backend, names in by_backend.values():
             yield from backend.update(names)
+
+    def update_apps(
+        self,
+        selected: list[Package],
+        pending: list[Package],
+        snapshot: SnapshotManager | None = None,
+    ) -> Iterator[str]:
+        """The apps-first update (Phase 7): update `selected`, hold back
+        everything else in `pending` — the system layer always is.
+
+        Each backend gets one invocation with its own selected/held split;
+        for pacman that becomes a single `-Syu --ignore=<held>` instead of
+        per-package cherry-picks. Because the system-layer sync now really
+        advances libraries, a snapshot is taken first (when available), same
+        safety net as the full-upgrade path.
+        """
+        if not selected:
+            yield "[archbooster] Nothing selected to update.\n"
+            return
+
+        for pkg in selected:
+            if self.backend_for(pkg) is None:
+                yield f"[archbooster] No backend for {pkg.name} ({pkg.source}); skipping.\n"
+
+        selected_keys = {(p.source, p.name) for p in selected}
+        snapshot_taken = False
+        for backend in self.backends:
+            backend_selected = [p for p in selected if backend.owns(p)]
+            if not backend_selected:
+                continue
+            backend_held = [
+                p for p in pending
+                if backend.owns(p) and (p.source, p.name) not in selected_keys
+            ]
+            if (backend.has_system_layer and not snapshot_taken
+                    and snapshot is not None and snapshot.is_available()):
+                snapshot_taken = True
+                yield f"[archbooster] Creating {snapshot.backend} snapshot before update...\n"
+                snap_id = snapshot.create("archbooster: pre-app-update")
+                if snap_id:
+                    yield f"[archbooster] Snapshot created: {snap_id}\n"
+                else:
+                    yield "[archbooster] Snapshot creation failed; continuing without one.\n"
+            yield from backend.update_apps(backend_selected, backend_held)
 
     def full_upgrade(self, snapshot: SnapshotManager | None = None) -> Iterator[str]:
         """Run a full upgrade on every backend that has a system layer.

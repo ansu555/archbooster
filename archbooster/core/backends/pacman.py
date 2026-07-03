@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import difflib
 import shutil
+import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
@@ -48,8 +49,43 @@ class PacmanBackend(Backend):
     def update(self, names: list[str]) -> Iterator[str]:
         return self._updater.run(names)
 
+    def update_apps(self, selected: list[Package], held: list[Package]) -> Iterator[str]:
+        # The apps-first path: one coherent `-Syu --ignore=<held>` instead of
+        # per-package `-S` cherry-picks (see Updater.run_apps for why).
+        return self._updater.run_apps(
+            [p.name for p in selected], [p.name for p in held],
+        )
+
     def full_upgrade(self) -> Iterator[str]:
         return self._updater.run_full_upgrade()
+
+    def list_installed(self) -> list[Package]:
+        """All installed native packages (`pacman -Q`), tagged official/AUR
+        via the foreign-package list (`pacman -Qqm`)."""
+        if not shutil.which("pacman"):
+            return []
+        try:
+            result = subprocess.run(
+                ["pacman", "-Q"], capture_output=True, text=True, timeout=30,
+            )
+            foreign_result = subprocess.run(
+                ["pacman", "-Qqm"], capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+        foreign = {line.strip() for line in foreign_result.stdout.splitlines() if line.strip()}
+        installed: list[Package] = []
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            name, version = parts[0], parts[1]
+            installed.append(Package(
+                name=name, current=version, new=version,
+                source="AUR" if name in foreign else "official",
+                priority="normal", status="up-to-date",
+            ))
+        return installed
 
     def changelog(self, package: Package) -> str | None:
         """PKGBUILD diff for AUR packages, fetched from AUR's cgit mirror and

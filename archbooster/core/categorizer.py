@@ -82,6 +82,52 @@ SOURCE_BASE_PATTERNS: dict[str, tuple[list[str], list[str]]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Display taxonomy (Package.category) — user vocabulary for filtering: nobody
+# thinks "critical", they think "drivers". Purely presentational; the
+# critical/normal/optional priority above remains the only safety input.
+# Pattern lists are generic across distros on purpose (apt's "linux-image-*"
+# and dnf's "kernel-core" both land in "kernel" via the same prefixes).
+# ---------------------------------------------------------------------------
+
+# Checked BEFORE kernel: "linux-firmware" must land in drivers, not kernel.
+DRIVER_CATEGORY_PATTERNS = [
+    "nvidia", "mesa", "amdgpu", "intel-ucode", "amd-ucode",
+    "linux-firmware", "xf86-video", "vulkan-", "broadcom", "sof-firmware",
+]
+
+KERNEL_CATEGORY_PATTERNS = [
+    "linux", "linux-lts", "linux-zen", "linux-hardened",   # Arch
+    "linux-image", "linux-headers", "linux-modules",        # Debian/Ubuntu
+    "kernel",                                               # Fedora
+]
+
+# Sources whose every package is a user-facing app by definition — no
+# .desktop-file lookup needed. (brew is deliberately absent: Homebrew on
+# Linux is overwhelmingly CLI formulae, so its packages default to "cli".)
+APP_ONLY_SOURCES = {"Flatpak", "snap"}
+
+
+def display_category(pkg: Package, gui_packages: frozenset[str] | set[str] = frozenset()) -> str:
+    """Map a (already priority-classified) package to its display category.
+
+    `gui_packages` is the set of native package names shipping a .desktop
+    launcher (see core.desktopdb) — the proxy for "user-facing app".
+    """
+    nl = pkg.name.lower()
+    if pkg.priority == "critical":
+        if any(p in nl for p in DRIVER_CATEGORY_PATTERNS):
+            return "drivers"
+        if any(nl == p or nl.startswith(p) for p in KERNEL_CATEGORY_PATTERNS):
+            return "kernel"
+        return "system"
+    if pkg.priority == "optional":
+        return "fonts-themes"
+    if pkg.source in APP_ONLY_SOURCES or pkg.name in gui_packages:
+        return "apps"
+    return "cli"
+
+
 def classify(
     name: str,
     extra_critical: list[str] | None = None,
@@ -124,7 +170,17 @@ def categorize(
     packages: list[Package],
     extra_critical: list[str] | None = None,
     extra_optional: list[str] | None = None,
+    gui_packages: frozenset[str] | set[str] | None = None,
 ) -> list[Package]:
+    """Set each package's safety priority AND display category.
+
+    `gui_packages` (native packages shipping a .desktop launcher) drives the
+    apps-vs-cli split; None means "unknown" and native packages fall back to
+    "cli" — callers with a real host should pass core.desktopdb's set. Kept as
+    an argument rather than looked up here so this module stays subprocess-free
+    and hermetically testable.
+    """
+    gui = gui_packages or frozenset()
     for pkg in packages:
         base_critical, base_optional = SOURCE_BASE_PATTERNS.get(
             pkg.source, (CRITICAL_PATTERNS, OPTIONAL_PATTERNS)
@@ -133,4 +189,5 @@ def categorize(
             pkg.name, extra_critical, extra_optional,
             base_critical=base_critical, base_optional=base_optional,
         )
+        pkg.category = display_category(pkg, gui)
     return packages
