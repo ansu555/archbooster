@@ -145,6 +145,8 @@ chmod +x archbooster-linux-x86_64
 
 | Key      | Action                        |
 |----------|-------------------------------|
+| `↑` / `↓` (or `j` / `k`) | Move between packages |
+| `Space`  | Toggle the highlighted package on/off |
 | `A`      | Select all packages           |
 | `N`      | Deselect all                  |
 | `I`      | Invert selection               |
