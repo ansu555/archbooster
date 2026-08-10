@@ -39,13 +39,41 @@ class Scanner:
     def _scan_official(self) -> list[Package]:
         """Run checkupdates (pacman-contrib). Safe — no root needed."""
         if not shutil.which("checkupdates"):
-            return []
+            return self._scan_official_via_helper()
         try:
             result = subprocess.run(
                 ["checkupdates"],
                 capture_output=True, text=True, timeout=60
             )
             # exit code 2 = no updates (not an error)
+            return [self._parse_line(line, "official")
+                    for line in result.stdout.strip().splitlines() if line]
+        except subprocess.TimeoutExpired:
+            return []
+
+    def _scan_official_via_helper(self) -> list[Package]:
+        """Official-repo updates via `yay/paru -Qu --repo`, for hosts without
+        pacman-contrib installed.
+
+        Returning an empty list here instead would be actively dangerous, not
+        merely incomplete: the apps-first update derives its `--ignore` hold
+        list from the scan, so an official scan that silently reports "nothing
+        pending" turns `-Syu --ignore=<held>` into a bare `-Syu` — a full
+        system upgrade, kernel and drivers included, from a screen that
+        promised to hold them back.
+
+        Unlike checkupdates this reads the local sync database rather than a
+        freshly synced temporary one, so it can lag until the next sync. A
+        slightly stale hold list is a far better failure mode than none.
+        """
+        helper = self._detect_aur_helper()
+        if not helper:
+            return []
+        try:
+            result = subprocess.run(
+                [helper, "-Qu", "--repo"],
+                capture_output=True, text=True, timeout=90
+            )
             return [self._parse_line(line, "official")
                     for line in result.stdout.strip().splitlines() if line]
         except subprocess.TimeoutExpired:

@@ -120,7 +120,7 @@ gives you.
 
 | Platform | Needs |
 |---|---|
-| Arch and Arch-based | `pacman-contrib` (for `checkupdates`), plus `yay` or `paru` for AUR — `sudo pacman -S pacman-contrib` |
+| Arch and Arch-based | `pacman`, plus `yay` or `paru` for AUR. Strongly recommended: `pacman-contrib` for `checkupdates` — `sudo pacman -S pacman-contrib`. Without it ArchBooster reads the local sync database instead, so the official-repo list can lag until the next sync; `install.sh` offers to install it and `--scan` says so if it's absent. |
 | Debian and Ubuntu | `apt` (present by default) |
 | Fedora and RHEL | `dnf` (present by default) |
 | Any distro | `flatpak` with at least one remote (e.g. Flathub), `snap` (snapd), or `brew` (Homebrew/Linuxbrew) |

@@ -97,6 +97,21 @@ def _cmd_scan(list_all: bool = False) -> None:
             print(f"{pkg.source:8} {pkg.name:40} {pkg.current:20} up to date"
                   f"{'':13}({pkg.category})")
 
+    _print_advisories()
+
+
+def _print_advisories() -> None:
+    """Report missing optional tooling after the scan result, not before it.
+
+    Printed last on purpose: the update list is what the user ran the command
+    for, and an advisory that pushes it off-screen is worse than no advisory.
+    """
+    from archbooster.core.preflight import advisories
+
+    for advisory in advisories():
+        print(f"\n! {advisory.tool} not found — {advisory.impact}.")
+        print(f"  Install it with: {advisory.fix}")
+
 
 def _cmd_update(scope: str | None = None) -> None:
     """The one command: update the app layer, always hold the system layer."""

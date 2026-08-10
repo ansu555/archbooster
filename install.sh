@@ -25,15 +25,45 @@ if ! command -v pipx >/dev/null 2>&1; then
     exit 1
 fi
 
-# 2. Install (or upgrade) archbooster from this checkout.
+# 2. Recommended tooling. Arch-family only — checkupdates comes from
+#    pacman-contrib and is meaningless on a Debian/Fedora/Flatpak-only host.
+#    ArchBooster works without it (it falls back to `yay -Qu --repo`, which
+#    reads the local sync database), but checkupdates syncs a temporary one,
+#    so it is the difference between a fresh update list and a stale one.
+#    Advisory, never fatal: a missing optional tool must not block an install.
+if command -v pacman >/dev/null 2>&1 && ! command -v checkupdates >/dev/null 2>&1; then
+    echo -e "${YELLOW}→ checkupdates not found (provided by pacman-contrib).${RESET}"
+    echo "  Without it, official-repo updates are read from the local sync"
+    echo "  database and can lag behind until the next sync."
+    # Only offer the prompt on a real terminal: piping this script into bash
+    # (curl | bash) leaves stdin consumed, where a read would misfire.
+    if [ -t 0 ]; then
+        REPLY=""
+        read -r -p "  Install pacman-contrib now? [Y/n] " REPLY || true
+        case "$REPLY" in
+            ""|[Yy]*)
+                # `|| true` so a declined sudo password or a mirror hiccup
+                # leaves the ArchBooster install itself unaffected.
+                sudo pacman -S --needed --noconfirm pacman-contrib || \
+                    echo -e "${YELLOW}  Install failed; continuing without it.${RESET}"
+                ;;
+            *) echo "  Skipped — run: sudo pacman -S pacman-contrib" ;;
+        esac
+    else
+        echo "  Install it with: sudo pacman -S pacman-contrib"
+    fi
+    echo ""
+fi
+
+# 3. Install (or upgrade) archbooster from this checkout.
 echo -e "${GREEN}→ Installing archbooster with pipx...${RESET}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pipx install --force "$SCRIPT_DIR"
 
-# 3. Make sure ~/.local/bin is on PATH (idempotent).
+# 4. Make sure ~/.local/bin is on PATH (idempotent).
 pipx ensurepath >/dev/null 2>&1 || true
 
-# 4. Install systemd user units (optional — only if systemd is present).
+# 5. Install systemd user units (optional — only if systemd is present).
 if command -v systemctl >/dev/null 2>&1; then
     SYSTEMD_DIR="$HOME/.config/systemd/user"
     mkdir -p "$SYSTEMD_DIR"

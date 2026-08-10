@@ -291,6 +291,9 @@ class DashboardScreen(Screen):
         self._source_filter:   str | None = None
         self._profile_patterns: dict[str, list[str]] = {}
         self._active_profile_idx: int = -1  # -1 = no profile filter active
+        # Missing-tooling toasts fire on the first scan only — [r] re-scans
+        # often, and repeating the same advisory every time is nagging.
+        self._advised: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -360,6 +363,27 @@ class DashboardScreen(Screen):
             (p.source, p.name) for p in packages if p.priority != "critical"
         }
         self._render_list()
+        self._notify_advisories()
+
+    def _notify_advisories(self) -> None:
+        """Toast any missing optional tooling once per scan.
+
+        The scan still works without it — this is the difference between a
+        fresh package list and a possibly-stale one, so it warns rather than
+        blocks, and never repeats within a session.
+        """
+        if self._advised:
+            return
+        self._advised = True
+        from archbooster.core.preflight import advisories
+
+        for advisory in advisories():
+            self.notify(
+                f"{advisory.tool} not found — {advisory.impact}. "
+                f"Fix: {advisory.fix}",
+                severity="warning",
+                timeout=12,
+            )
 
     # ---- rendering --------------------------------------------------- #
 

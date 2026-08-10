@@ -33,6 +33,27 @@ from collections.abc import Iterator
 from archbooster.core.categorizer import is_system
 from archbooster.core.procutil import stream_subprocess
 
+# Always passed to `--ignore` on the apps-first path, on top of the holds the
+# caller computed from the scan. pacman matches --ignore entries as globs, so
+# these cover the whole kernel/driver/firmware/bootloader layer by name shape
+# rather than by what a given scan happened to find.
+#
+# The scan-derived hold list already contains every one of these that has a
+# pending update, so on a healthy host this changes nothing. It exists for the
+# unhealthy one: holds are only as complete as the scan, and a scan that
+# under-reports (pacman-contrib missing, checkupdates timing out, a stale
+# cache) would otherwise silently degrade `-Syu --ignore=<held>` into a plain
+# `-Syu`. The apps-first promise cannot be contingent on a scan succeeding.
+SYSTEM_HOLD_GLOBS = [
+    "linux", "linux-lts", "linux-zen", "linux-hardened", "linux-rt*",
+    "linux-headers", "linux-*-headers",
+    "linux-firmware", "linux-firmware-*",
+    "nvidia*", "lib32-nvidia*", "opencl-nvidia*",
+    "mesa", "lib32-mesa", "vulkan-*", "lib32-vulkan-*",
+    "xf86-video-*", "amd-ucode", "intel-ucode",
+    "grub", "efibootmgr", "refind", "systemd-boot*",
+]
+
 
 class Updater:
     def __init__(self, confirm: bool = False) -> None:
@@ -123,10 +144,11 @@ class Updater:
 
     def _build_apps_command(self, held: list[str]) -> list[str]:
         # A real `-Syu` (fresh databases, coherent dependency solve) with the
-        # hold list riding on `--ignore`. With no holds this degenerates to a
-        # plain full upgrade, which is correct: it means nothing pending was
-        # deselected and no system updates exist.
-        ignore = [f"--ignore={','.join(held)}"] if held else []
+        # hold list riding on `--ignore`. The system-layer globs are always
+        # appended, so an empty `held` means "nothing else was deselected" —
+        # never "upgrade the kernel too".
+        holds = list(dict.fromkeys(list(held) + SYSTEM_HOLD_GLOBS))
+        ignore = [f"--ignore={','.join(holds)}"]
         for helper in ("yay", "paru"):
             if shutil.which(helper):
                 return [helper, "-Syu", *ignore] + self._noconfirm()

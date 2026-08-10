@@ -17,6 +17,7 @@ from archbooster.core.scanner import Package
 from archbooster.core.backends.registry import BackendRegistry
 from archbooster.core.history import History
 from archbooster.core.config import load_config
+from archbooster.core.procutil import STATUS_FAIL_PREFIX
 from archbooster.core.snapshot import SnapshotManager
 from archbooster.core.sudo_auth import authenticate, is_sudo_cached
 
@@ -210,16 +211,23 @@ class ProgressScreen(Screen):
     def _write_line(self, log: RichLog, line: str) -> bool:
         """Write one output line to the log with severity colouring.
 
-        Returns True if the line signals an error, so the caller can mark the
-        package failed.
+        Returns True if the line signals the *run* failed, so the caller can
+        mark the package failed. Only procutil's exit-code sentinel counts:
+        pacman and yay print `error:` lines they then recover from — a mirror
+        returning 404 before the next mirror serves the file is the common one
+        — and treating those as fatal reports a completed update as failed.
+        Error lines are still coloured red so they stay visible in the log.
         """
         line = line.rstrip()
         if not line:
             return False
         low = line.lower()
-        if "error:" in low or line.startswith("error"):
+        if line.startswith(STATUS_FAIL_PREFIX.rstrip()):
             safe_log(log, line, "red")
             return True
+        if "error:" in low or line.startswith("error"):
+            safe_log(log, line, "red")
+            return False
         if "warning:" in low or line.startswith("warning"):
             safe_log(log, line, "yellow")
         elif line.startswith("::") or line.startswith("==>"):

@@ -30,21 +30,39 @@ def _pkg(name, source="official", priority="normal"):
 
 # ---- command building ------------------------------------------------- #
 
+def _ignored(cmd: list[str]) -> list[str]:
+    flag = next(arg for arg in cmd if arg.startswith("--ignore="))
+    return flag.removeprefix("--ignore=").split(",")
+
+
 def test_apps_command_carries_holds_as_ignore(monkeypatch):
     _only_yay(monkeypatch)
     cmd = Updater(confirm=False)._build_apps_command(["linux", "nvidia"])
-    assert cmd == ["yay", "-Syu", "--ignore=linux,nvidia", "--noconfirm"]
+    assert cmd[:2] == ["yay", "-Syu"]
+    assert cmd[-1] == "--noconfirm"
+    assert _ignored(cmd)[:2] == ["linux", "nvidia"]   # caller's holds lead
 
 
-def test_apps_command_without_holds_is_plain_syu(monkeypatch):
+def test_apps_command_always_holds_the_system_layer(monkeypatch):
+    """No holds from the scan must still never mean 'upgrade the kernel'.
+
+    A scan that under-reports (no pacman-contrib, a timeout) used to make this
+    a bare `-Syu` — the full system upgrade this screen promises not to run.
+    """
     _only_yay(monkeypatch)
-    assert Updater(confirm=True)._build_apps_command([]) == ["yay", "-Syu"]
+    cmd = Updater(confirm=True)._build_apps_command([])
+    assert cmd[:2] == ["yay", "-Syu"]
+    ignored = _ignored(cmd)
+    for glob in ("linux", "nvidia*", "mesa", "linux-firmware", "grub"):
+        assert glob in ignored
 
 
 def test_apps_command_pacman_fallback_uses_sudo(monkeypatch):
     _only_pacman(monkeypatch)
     cmd = Updater(confirm=False)._build_apps_command(["linux"])
-    assert cmd == ["sudo", "pacman", "-Syu", "--ignore=linux", "--noconfirm"]
+    assert cmd[:3] == ["sudo", "pacman", "-Syu"]
+    assert cmd[-1] == "--noconfirm"
+    assert "linux" in _ignored(cmd)
 
 
 # ---- run_apps guardrail ------------------------------------------------ #
@@ -97,9 +115,10 @@ def test_run_apps_dedupes_hold_list(monkeypatch):
     _only_yay(monkeypatch)
 
     list(u.run_apps(["firefox"], held=["mesa", "mesa", "linux"]))
-    ignore_flag = next(arg for arg in captured["cmd"] if arg.startswith("--ignore="))
-    held = ignore_flag.removeprefix("--ignore=").split(",")
-    assert held == ["mesa", "linux"]
+    held = _ignored(captured["cmd"])
+    assert held[:2] == ["mesa", "linux"]        # deduped, order preserved
+    assert held.count("mesa") == 1              # and not re-added by the globs
+    assert held.count("linux") == 1
 
 
 # ---- registry hold computation ----------------------------------------- #
