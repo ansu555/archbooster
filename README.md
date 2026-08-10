@@ -1,110 +1,147 @@
-# ⚡ ArchBooster
+<div align="center">
 
-**Update your apps, leave the OS alone.**
+# ArchBooster
 
-A selective update manager for Linux, built with Python + Textual. ArchBooster
-gives you one unified, checkbox-driven view across every package source on
-your machine — official repos, AUR, Flatpak, apt, dnf, Snap, and Homebrew —
-categorizes updates by risk, and refuses to let a partial system upgrade slip
-through by accident.
+### Update your apps. Leave the OS alone.
 
-Runs on **Arch (+ Arch-based) via pacman/AUR, Debian/Ubuntu via apt,
-Fedora/RHEL via dnf, and any distro with Flatpak, Snap, or Homebrew.**
+A selective update manager for Linux, built with Python and Textual — one
+checkbox-driven view across pacman, AUR, Flatpak, apt, dnf, Snap and Homebrew,
+with a hard guardrail between your apps and your system layer.
+
+[![CI](https://img.shields.io/github/actions/workflow/status/ansu555/archbooster/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/ansu555/archbooster/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/archbooster?style=flat-square)](https://pypi.org/project/archbooster/)
+[![Python](https://img.shields.io/pypi/pyversions/archbooster?style=flat-square)](https://pypi.org/project/archbooster/)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+
+[Install](#install) · [Usage](#usage) · [Configuration](#configuration) · [Contributing](#contributing)
+
+</div>
 
 ---
 
-## Why this, when `flatpak update` and `yay -Sua` already exist?
+## Demo
 
-Each package manager already has its own "update everything" command. What
-none of them gives you:
+<div align="center">
 
-- **One list across all of them.** pacman, AUR, and Flatpak updates in a
-  single screen instead of three terminals.
-- **One command that never touches your system layer.** `archbooster
-  --update` (or `[ENTER]` in the TUI) updates your apps — and the libraries
-  they need — while the kernel, drivers, firmware, and bootloader are
-  **always held back** via pacman's own `--ignore` mechanism. Updating the
-  system layer takes an explicit full upgrade, with a snapshot taken first.
-- **A safety guardrail.** ArchBooster knows the difference between an
-  **app** (Firefox, a Flatpak, an AUR `-bin` package) and the **system**
-  (kernel, mesa/nvidia drivers, glibc, systemd). A *partial* upgrade of the
-  system layer is exactly how a rolling-release install breaks, so system
-  packages can never be cherry-picked — they only move together, via a full
-  `-Syu`.
-- **Categorization, filters, history, and a background check** — packages
-  are sorted into user vocabulary (Apps / CLI & libraries / Drivers &
-  firmware / Kernel / Core system / Fonts & themes) and filterable by type
-  and by package manager; every run is logged, and a systemd timer can check
-  on a schedule and notify you without auto-updating anything.
+<a href="https://youtu.be/7zJihxzv7k8">
+  <img src="https://img.youtube.com/vi/7zJihxzv7k8/maxresdefault.jpg" alt="Watch the ArchBooster demo on YouTube" width="820">
+</a>
 
-That combination — unification + the app/system guardrail — is the thing no
-single command does.
+*Walkthrough — scan, filter, select, update. [Watch on YouTube](https://youtu.be/7zJihxzv7k8)*
+
+<br>
+
+<img src="https://raw.githubusercontent.com/ansu555/archbooster/main/docs/screenshot.png" alt="ArchBooster dashboard" width="820">
+
+</div>
+
+---
+
+## What it solves
+
+Every package manager already has an "update everything" command. Running them
+one by one is tedious, and on a rolling release the fast path is also the risky
+one: a half-finished system upgrade is exactly how an Arch install breaks.
+
+ArchBooster sits above all of them and adds the parts none of them have.
+
+**One list across every source.** pacman, AUR and Flatpak updates on a single
+screen instead of three terminals — plus apt, dnf, Snap and Homebrew wherever
+they're installed.
+
+**One command that never touches the system layer.** `archbooster --update`
+(or `Enter` in the TUI) updates your apps and the libraries they need, while the
+kernel, drivers, firmware and bootloader are always held back through pacman's
+own `--ignore` mechanism. Moving the system layer takes an explicit full
+upgrade, with a snapshot taken first.
+
+**A guardrail, not just a filter.** ArchBooster knows the difference between an
+app (Firefox, a Flatpak, an AUR `-bin` package) and the system (kernel,
+mesa/nvidia drivers, glibc, systemd). System packages can never be
+cherry-picked — they only ever move together, via a full `-Syu`.
+
+**Context around the list.** Packages are sorted into plain vocabulary — Apps,
+CLI and libraries, Drivers and firmware, Kernel, Core system, Fonts and themes —
+filterable by type and by package manager. Every run is logged, changelogs and
+PKGBUILD diffs are one keystroke away, and a systemd timer can check on a
+schedule and notify you without updating anything.
+
+Unification plus the app/system guardrail is the combination no single command
+gives you.
 
 ---
 
 ## Features
 
-- Unified scan across **pacman + AUR (yay/paru), Flatpak, apt, dnf, Snap, and
-  Homebrew**, grouped by source
-- **Apps-first one-command update** (`archbooster --update` / `[ENTER]`):
-  updates the app layer via `-Syu --ignore=<system packages>` — a coherent
-  sync in which libraries ride along, but kernel/drivers/firmware/bootloader
-  are always held back
-- **Type & source filters** (`TAB` / `M`) — Apps, CLI & libraries, Drivers &
-  firmware, Kernel, Core system, Fonts & themes; or a single package manager.
-  User-facing apps are detected by their `.desktop` launchers (Flatpak/Snap
-  count automatically)
-- **Never a blank list** — up-to-date packages are shown too, in the TUI and
-  in `--scan`, so "no updates" reads as a healthy inventory instead of an
-  empty screen
-- 🔴 Critical / 🟡 Normal / 🟢 Optional categorization (configurable overrides,
-  with distro-specific system-package lists for apt/dnf too)
-- Select individual packages to update — never forced, system packages held
-- Live streaming output during update (real pacman/yay/flatpak/apt/dnf output)
-- **Changelog / PKGBUILD diff viewer** (`C`) — see what actually changed in an
-  AUR package (PKGBUILD diff) or a Flatpak (OSTree commit log) before updating
-- **Snapshot + rollback** — a full system upgrade (`F`) takes a snapper/
-  timeshift snapshot first when one's installed; roll back anytime from the
+**Unified scanning**
+- One scan across pacman, AUR (yay/paru), Flatpak, apt, dnf, Snap and Homebrew,
+  grouped by source
+- Never a blank list — up-to-date packages are shown too, in the TUI and in
+  `--scan`, so "no updates" reads as a healthy inventory rather than an empty
+  screen
+- Graceful degrade: a backend that isn't installed reports itself unavailable,
+  so a Fedora box with only Flatpak gets a clean Flatpak-only list
+
+**Apps-first updating**
+- `archbooster --update` / `Enter` updates the app layer via
+  `-Syu --ignore=<system packages>` — a coherent sync where libraries ride
+  along, but kernel, drivers, firmware and bootloader are always held back
+- Critical / Normal / Optional categorization with configurable overrides and
+  distro-specific system-package lists for apt and dnf
+- Select individual packages — never forced, system packages always held
+- Live streaming output during the update (real pacman/yay/flatpak/apt/dnf
+  output, not a spinner)
+
+**Filters and inspection**
+- Type filter (`Tab`) — Apps, CLI and libraries, Drivers and firmware, Kernel,
+  Core system, Fonts and themes. User-facing apps are detected from their
+  `.desktop` launchers; Flatpak and Snap count automatically
+- Source filter (`M`) — narrow to a single package manager
+- Changelog and PKGBUILD diff viewer (`C`) — see what actually changed in an AUR
+  package or a Flatpak (OSTree commit log) before updating
+
+**Safety and automation**
+- Snapshot and rollback — a full system upgrade (`F`) takes a snapper or
+  timeshift snapshot first when one is installed; roll back anytime from the
   Snapshots screen (`B`)
-- **Update profiles** (`P`) — cycle named groups of packages (e.g. "browsers")
-  from config, auto-selecting just that group; also drives opt-in scheduled
-  auto-update of a chosen safe subset (system packages always excluded)
+- Update profiles (`P`) — cycle named groups of packages from config (for
+  example "browsers"), auto-selecting just that group; also drives opt-in
+  scheduled auto-update of a chosen safe subset, system packages always excluded
 - Update history log
-- Background daemon via systemd timer (checks every N hours) with a desktop
-  notification (`notify-send`) when updates are found
-- Graceful degrade: a backend that isn't installed just reports itself
-  unavailable, so e.g. a Fedora box with only Flatpak gets a clean
-  Flatpak-only list instead of a misleading empty one
+- Background daemon via systemd timer, with a desktop notification when updates
+  are found
 
 ---
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.11 or newer
 - At least one supported backend:
-  - **Arch / Arch-based**: `pacman-contrib` (for `checkupdates`) and
-    `yay` or `paru` for AUR — `sudo pacman -S pacman-contrib`
-  - **Debian / Ubuntu**: `apt` (present by default)
-  - **Fedora / RHEL**: `dnf` (present by default)
-  - **Any distro**: `flatpak`, with at least one remote added (e.g. Flathub)
-  - **Any distro**: `snap` (snapd)
-  - **Any distro**: `brew` (Homebrew/Linuxbrew)
-- Optional: `notify-send` (`libnotify`) for desktop notifications from the
-  background daemon — installed by default on almost every desktop distro
-- Optional: `snapper` or `timeshift` for pre-upgrade snapshots + rollback
-- Optional: `systemd` user services, for the background timer
+
+| Platform | Needs |
+|---|---|
+| Arch and Arch-based | `pacman-contrib` (for `checkupdates`), plus `yay` or `paru` for AUR — `sudo pacman -S pacman-contrib` |
+| Debian and Ubuntu | `apt` (present by default) |
+| Fedora and RHEL | `dnf` (present by default) |
+| Any distro | `flatpak` with at least one remote (e.g. Flathub), `snap` (snapd), or `brew` (Homebrew/Linuxbrew) |
+
+Optional extras:
+
+| Optional | Gives you |
+|---|---|
+| `notify-send` (`libnotify`) | Desktop notifications from the background daemon — already present on most desktop distros |
+| `snapper` or `timeshift` | Pre-upgrade snapshots and rollback |
+| `systemd` user services | The scheduled background check |
 
 ---
 
 ## Install
 
-Three ways to get it, pick whichever fits:
-
 | Method | Command | Best for |
 |---|---|---|
 | **pipx** (PyPI) | `pipx install archbooster` | Any distro with Python 3.11+ |
 | **Static binary** | Download `archbooster-linux-x86_64` from [Releases](https://github.com/ansu555/archbooster/releases) | Zero-Python install, quick try |
-| **AUR** | `yay -S archbooster` *(source)* or `archbooster-bin` *(prebuilt)* | Arch / Arch-based — **pending**, see note below |
+| **AUR** | `yay -S archbooster` (source) or `archbooster-bin` (prebuilt) | Arch and Arch-based — pending, see note below |
 
 ```bash
 # pipx (recommended)
@@ -121,53 +158,51 @@ chmod +x archbooster-linux-x86_64
 ./archbooster-linux-x86_64
 ```
 
-> Installing pipx first, if needed: `sudo pacman -S python-pipx` /
-> `sudo apt install pipx` / `sudo dnf install pipx`.
+> **Need pipx first?** `sudo pacman -S python-pipx` / `sudo apt install pipx` /
+> `sudo dnf install pipx`.
 
-> **AUR note:** the `PKGBUILD`s are ready in `packaging/aur/`, but new-account
-> registration on `aur.archlinux.org` is currently closed on Arch's side, so
-> the packages aren't pushed yet. Use pipx or the binary until that reopens.
+> **AUR status.** The `PKGBUILD`s are ready in `packaging/aur/`, but new-account
+> registration on `aur.archlinux.org` is closed on Arch's side, so the packages
+> aren't pushed yet. Use pipx or the static binary until that reopens.
 
 ---
 
 ## Usage
 
-| Command                    | Action                              |
-|-----------------------------|--------------------------------------|
-| `archbooster`               | Open the full TUI dashboard         |
-| `archbooster --update`      | **The one command**: update the app layer now; system layer always held back |
-| `archbooster --update --scope apps` | Same, but user-facing apps only (default scope is `safe`; see config) |
-| `archbooster --scan`        | Print pending updates + inventory summary (never blank) |
-| `archbooster --scan --all`  | Also list every up-to-date package  |
-| `archbooster --daemon`      | Run one background check (systemd)  |
+| Command | Action |
+|---|---|
+| `archbooster` | Open the full TUI dashboard |
+| `archbooster --update` | The one command — update the app layer now; system layer always held back |
+| `archbooster --update --scope apps` | Same, but user-facing apps only (default scope is `safe`) |
+| `archbooster --scan` | Print pending updates and an inventory summary (never blank) |
+| `archbooster --scan --all` | Also list every up-to-date package |
+| `archbooster --daemon` | Run one background check (used by systemd) |
 
-### Keybindings (inside TUI)
+### Keybindings
 
-| Key      | Action                        |
-|----------|-------------------------------|
-| `↑` / `↓` (or `j` / `k`) | Move between packages |
-| `Space`  | Toggle the highlighted package on/off |
-| `A`      | Select all packages           |
-| `N`      | Deselect all                  |
-| `I`      | Invert selection               |
-| `U`      | Select user-facing apps only  |
-| `TAB`    | Cycle type filter (Apps / CLI / Drivers / Kernel / System / Fonts) |
-| `M`      | Cycle source filter (pacman / AUR / Flatpak / …) |
-| `Enter`  | Update selected (app layer; system always held back) |
-| `F`      | Full system upgrade (snapshot first, if enabled) |
-| `R`      | Re-scan for updates           |
-| `C`      | Changelog / PKGBUILD diff for the highlighted row |
-| `P`      | Cycle update profiles (see `[profiles]` in config) |
-| `H`      | Open history                  |
-| `S`      | Open settings                 |
-| `B`      | Open snapshots (rollback: `R` to arm, `Y` to confirm) |
-| `Q`      | Quit                          |
-
-![ArchBooster dashboard](docs/screenshot.svg)
+| Key | Action |
+|---|---|
+| `↑` `↓` or `j` `k` | Move between packages |
+| `Space` | Toggle the highlighted package |
+| `A` | Select all packages |
+| `N` | Deselect all |
+| `I` | Invert selection |
+| `U` | Select user-facing apps only |
+| `Tab` | Cycle type filter (Apps / CLI / Drivers / Kernel / System / Fonts) |
+| `M` | Cycle source filter (pacman / AUR / Flatpak / …) |
+| `Enter` | Update selected — app layer; system always held back |
+| `F` | Full system upgrade (snapshot first, if enabled) |
+| `R` | Re-scan for updates |
+| `C` | Changelog / PKGBUILD diff for the highlighted row |
+| `P` | Cycle update profiles (see `[profiles]` in config) |
+| `H` | Open history |
+| `S` | Open settings |
+| `B` | Open snapshots — `R` to arm a rollback, `Y` to confirm |
+| `Q` | Quit |
 
 ---
 
-## Config
+## Configuration
 
 Auto-created at `~/.config/archbooster/config.toml` on first run:
 
@@ -176,13 +211,13 @@ Auto-created at `~/.config/archbooster/config.toml` on first run:
 aur_helper     = "yay"   # or "paru"
 check_interval = 4       # hours between background daemon scans
 confirm        = false   # false: run pacman/yay/flatpak non-interactively
-                          #        (your selection in the TUI is the
-                          #        confirmation).
-                          # true:  also show the package manager's own
-                          #        prompts (best from a plain terminal).
+                         #        (your selection in the TUI is the
+                         #        confirmation)
+                         # true:  also show the package manager's own prompts
+                         #        (best from a plain terminal)
 notify         = true    # desktop notification (notify-send) when the
-                          # background daemon finds updates. No-ops quietly
-                          # if notify-send isn't installed.
+                         # background daemon finds updates; no-ops quietly if
+                         # notify-send isn't installed
 
 [categories]
 extra_critical = []      # extra package name prefixes to force "critical"
@@ -192,14 +227,14 @@ extra_optional = []      # extra package name prefixes to force "optional"
 packages = []            # packages to hide from the update list entirely
 
 [update]
-default_scope = "safe"   # scope of `archbooster --update` / [ENTER]:
-                          # "safe" = everything except the system layer
-                          #          (libraries ride along — recommended)
-                          # "apps" = user-facing apps only
+default_scope = "safe"   # scope of `archbooster --update` / [Enter]:
+                         # "safe" = everything except the system layer
+                         #          (libraries ride along — recommended)
+                         # "apps" = user-facing apps only
 
 [snapshot]
 enabled = true           # snapshot (snapper/timeshift) before a full upgrade
-backend = "auto"          # "auto" | "snapper" | "timeshift" | "none"
+backend = "auto"         # "auto" | "snapper" | "timeshift" | "none"
 
 [profiles]
 # named package-name pattern groups for the [P] filter, e.g.:
@@ -214,7 +249,7 @@ See [`docs/config.md`](docs/config.md) for a field-by-field reference.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 archbooster/
@@ -225,62 +260,44 @@ archbooster/
 │   ├── scanner.py              # Package dataclass + line parsing
 │   ├── categorizer.py          # critical / normal / optional + guardrail
 │   │                           #   (per-distro pattern lists: Arch/apt/dnf)
-│   ├── updater.py               # runs yay/pacman, streams output
-│   ├── procutil.py              # shared subprocess-streaming helper
-│   ├── notify.py                # notify-send wrapper
-│   ├── history.py               # read/write history.json
-│   ├── config.py                # load/write config.toml
-│   ├── snapshot.py               # snapper/timeshift snapshot + rollback
-│   ├── profiles.py               # [profiles] pattern matching
+│   ├── updater.py              # runs yay/pacman, streams output
+│   ├── procutil.py             # shared subprocess-streaming helper
+│   ├── notify.py               # notify-send wrapper
+│   ├── history.py              # read/write history.json
+│   ├── config.py               # load/write config.toml
+│   ├── snapshot.py             # snapper/timeshift snapshot + rollback
+│   ├── profiles.py             # [profiles] pattern matching
 │   └── backends/
-│       ├── base.py              # Backend interface
-│       ├── pacman.py            # official repos + AUR (+ PKGBUILD diff)
-│       ├── flatpak.py           # Flatpak — the cross-distro path
-│       ├── apt.py                # Debian/Ubuntu
-│       ├── dnf.py                # Fedora/RHEL
-│       ├── snap.py                # snapd
-│       ├── brew.py                # Homebrew/Linuxbrew
-│       └── registry.py          # auto-detects installed backends
+│       ├── base.py             # Backend interface
+│       ├── pacman.py           # official repos + AUR (+ PKGBUILD diff)
+│       ├── flatpak.py          # Flatpak — the cross-distro path
+│       ├── apt.py              # Debian/Ubuntu
+│       ├── dnf.py              # Fedora/RHEL
+│       ├── snap.py             # snapd
+│       ├── brew.py             # Homebrew/Linuxbrew
+│       └── registry.py         # auto-detects installed backends
 ├── screens/
-│   ├── dashboard.py             # Main checklist UI, grouped by source
-│   ├── progress.py              # Live update output (+ pre-upgrade snapshot)
-│   ├── changelog.py              # Changelog / PKGBUILD diff viewer
-│   ├── snapshots.py               # Snapshot list + rollback
-│   ├── history.py                # Past updates log
-│   └── settings.py               # Settings editor
+│   ├── dashboard.py            # Main checklist UI, grouped by source
+│   ├── progress.py             # Live update output (+ pre-upgrade snapshot)
+│   ├── changelog.py            # Changelog / PKGBUILD diff viewer
+│   ├── snapshots.py            # Snapshot list + rollback
+│   ├── history.py              # Past updates log
+│   └── settings.py             # Settings editor
 ├── systemd/
-│   ├── archbooster.service       # Systemd user service
-│   └── archbooster.timer         # Systemd timer (every N hours)
-├── packaging/                    # PyInstaller binary + AUR PKGBUILDs
-└── install.sh                    # One-shot pipx-based installer
+│   ├── archbooster.service     # Systemd user service
+│   └── archbooster.timer       # Systemd timer (every N hours)
+├── packaging/                  # PyInstaller binary + AUR PKGBUILDs
+└── install.sh                  # One-shot pipx-based installer
 ```
-
----
-
-## Roadmap
-
-- [x] Phase 0 — Release hardening (license, pipx installer, config-driven
-      confirm, tests + CI)
-- [x] Phase 2 — Full Textual dashboard + `Backend` abstraction
-- [x] Phase 3 — Flatpak backend (cross-distro milestone)
-- [x] Phase 4 — Packaging: pipx/PyPI, static binary, AUR `PKGBUILD`s, release CI
-- [x] Phase 5 — Desktop notifications, docs, **v0.2 public release**
-- [x] Phase 6 — Changelog/diff viewer, snapshot + rollback, apt/dnf/Snap/
-      Homebrew backends, update profiles + opt-in auto-update — see
-      [the roadmap doc](docs/ROADMAP.md) for details
-- [x] Phase 7 — Apps-first update model: one command (`--update`) that never
-      touches the system layer (`-Syu --ignore` under the hood), type/source
-      filters, user-facing-app detection, and a never-blank inventory view
 
 ---
 
 ## Contributing
 
-All phases on the original roadmap are shipped — there's no active feature
-backlog. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for what's actually useful
-to work on (new backend ports, real-world testing on distros the maintainer
-can't run locally, AUR publishing once registration reopens) before opening
-a PR.
+Every phase on the original roadmap has shipped, so there's no active feature
+backlog. What is genuinely useful: new backend ports, real-world testing on
+distros the maintainer can't run locally, and AUR publishing once registration
+reopens. See [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a PR.
 
 ---
 
