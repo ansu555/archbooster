@@ -18,7 +18,7 @@ pkgbase = archbooster
 	optdepends = paru: AUR package scanning and updates
 	source = archbooster-0.4.0.tar.gz::https://github.com/ansu555/archbooster/archive/refs/tags/v0.4.0.tar.gz
 	source = archbooster.service
-	sha256sums = SKIP
-	sha256sums = SKIP
+	sha256sums = baa168ca7722706ae16bc1ce4893feb1d67422bb86bb4761106aa957250391b5
+	sha256sums = bfd53b8f404ab73274e9909d4e6fa51b22c16f4e01531cdd3cbc76f640727c16
 
 pkgname = archbooster

@@ -15,8 +15,8 @@ optdepends=('pacman-contrib: fresh official-repo update list via checkupdates'
             'paru: AUR package scanning and updates')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ansu555/archbooster/archive/refs/tags/v$pkgver.tar.gz"
         "archbooster.service")
-sha256sums=('SKIP'
-            'SKIP')
+sha256sums=('baa168ca7722706ae16bc1ce4893feb1d67422bb86bb4761106aa957250391b5'
+            'bfd53b8f404ab73274e9909d4e6fa51b22c16f4e01531cdd3cbc76f640727c16')
 backup=()
 
 build() {
