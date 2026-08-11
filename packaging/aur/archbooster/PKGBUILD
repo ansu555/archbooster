@@ -1,6 +1,6 @@
 # Maintainer: ansu555
 pkgname=archbooster
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="Selective update manager for Linux — update your apps, leave the OS alone"
 arch=('any')
@@ -8,7 +8,9 @@ url="https://github.com/ansu555/archbooster"
 license=('MIT')
 depends=('python' 'python-textual')
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
-optdepends=('flatpak: scan and update Flatpak apps'
+checkdepends=('python-pytest')
+optdepends=('pacman-contrib: fresh official-repo update list via checkupdates'
+            'flatpak: scan and update Flatpak apps'
             'yay: AUR package scanning and updates'
             'paru: AUR package scanning and updates')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/ansu555/archbooster/archive/refs/tags/v$pkgver.tar.gz"
@@ -20,6 +22,13 @@ backup=()
 build() {
     cd "$pkgname-$pkgver"
     python -m build --wheel --no-isolation
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    # The suite is hermetic (no network, no pacman calls — see tests/conftest.py),
+    # so it is safe to run inside a clean chroot build.
+    python -m pytest -q
 }
 
 package() {

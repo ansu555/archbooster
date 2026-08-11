@@ -1,6 +1,6 @@
 # Maintainer: ansu555
 pkgname=archbooster-bin
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="Selective update manager for Linux — update your apps, leave the OS alone (prebuilt binary)"
 arch=('x86_64')
@@ -8,7 +8,8 @@ url="https://github.com/ansu555/archbooster"
 license=('MIT')
 provides=('archbooster')
 conflicts=('archbooster')
-optdepends=('flatpak: scan and update Flatpak apps'
+optdepends=('pacman-contrib: fresh official-repo update list via checkupdates'
+            'flatpak: scan and update Flatpak apps'
             'yay: AUR package scanning and updates'
             'paru: AUR package scanning and updates')
 source=("https://github.com/ansu555/archbooster/releases/download/v$pkgver/archbooster-linux-x86_64"
