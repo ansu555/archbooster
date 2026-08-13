@@ -16,7 +16,11 @@ import subprocess
 from collections.abc import Iterator
 
 from archbooster.core.backends.base import Backend
-from archbooster.core.categorizer import APT_CRITICAL_PATTERNS, is_system
+from archbooster.core.categorizer import (
+    APT_ALWAYS_UPGRADE_PATTERNS,
+    APT_CRITICAL_PATTERNS,
+    never_cherry_pick,
+)
 from archbooster.core.procutil import stream_subprocess
 from archbooster.core.scanner import Package
 
@@ -66,15 +70,16 @@ class AptBackend(Backend):
     def update(self, names: list[str]) -> Iterator[str]:
         """Yield output lines while selectively upgrading the named packages.
 
-        System-layer packages (kernel, systemd, libc6, drivers, ...) are
-        filtered out here so a partial upgrade of Debian's system layer can't
-        happen by accident — the same guardrail PacmanBackend enforces, using
-        apt's own package-name patterns.
+        Neither non-app layer may be cherry-picked here — not the kernel/driver
+        block, and not the core ABI libs (libc6, libssl, systemd) either — so a
+        partial upgrade of Debian's system layer can't happen by accident. Same
+        guardrail PacmanBackend enforces, using apt's own name patterns.
         """
         if not names:
             return
 
-        blocked = [n for n in names if is_system(n, base_critical=APT_CRITICAL_PATTERNS)]
+        blocked = [n for n in names if never_cherry_pick(
+            n, base_critical=APT_CRITICAL_PATTERNS, base_core=APT_ALWAYS_UPGRADE_PATTERNS)]
         allowed = [n for n in names if n not in blocked]
 
         if blocked:

@@ -75,14 +75,21 @@ def _cmd_scan(list_all: bool = False) -> None:
     _, _, pending, installed = _load_state()
 
     for pkg in pending:
-        held = "  [system — held]" if pkg.priority == "critical" else ""
+        tag = ""
+        if pkg.priority == "critical":
+            tag = "  [system — held]"
+        elif pkg.priority == "core":
+            tag = "  [core lib — upgrades with apps]"
         print(f"{pkg.source:8} {pkg.name:40} {pkg.current:20} → {pkg.new:20} "
-              f"({pkg.category}){held}")
+              f"({pkg.category}){tag}")
 
     if pending:
         system = sum(1 for p in pending if p.priority == "critical")
-        apps   = len(pending) - system
+        core   = sum(1 for p in pending if p.priority == "core")
+        apps   = len(pending) - system - core
         parts  = [f"{apps} app-layer"]
+        if core:
+            parts.append(f"{core} core lib (upgraded by --update, never held)")
         if system:
             parts.append(f"{system} system (held back by --update; full upgrade to apply)")
         print(f"\n{len(pending)} update(s) pending: {', '.join(parts)}")
@@ -123,11 +130,16 @@ def _cmd_update(scope: str | None = None) -> None:
         return
 
     scope = scope or cfg.update_scope
+    # Core libs are never "selected" (you don't cherry-pick libc) but must never
+    # be held either, so they're added to the selection in every scope — the
+    # hold list is the complement of this set. Updater enforces the same rule
+    # again when it builds `--ignore`.
+    core = [p for p in pending if p.priority == "core"]
     if scope == "apps":
         selected = [p for p in pending
-                    if p.priority != "critical" and p.category == "apps"]
+                    if p.priority == "normal" and p.category == "apps"] + core
     else:
-        selected = [p for p in pending if p.priority != "critical"]
+        selected = [p for p in pending if p.priority not in ("critical", "core")] + core
     system_held = [p for p in pending if p.priority == "critical"]
 
     if not selected:

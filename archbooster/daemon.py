@@ -48,9 +48,10 @@ def run_daemon() -> None:
 def _run_auto_update(cfg: Config, registry: BackendRegistry, packages: list[Package]) -> list[Package]:
     """Non-interactively update packages matching [automation].auto_update_profile.
 
-    System/critical packages are hard-excluded here regardless of what the
-    profile's patterns match — this path runs unattended, so it gets the same
-    app/system guardrail as the selective updater, enforced a second time.
+    Both non-app layers are hard-excluded here regardless of what the profile's
+    patterns match — this path runs unattended and cherry-picks by name, so
+    neither the kernel block nor the core ABI libs may enter it. Same guardrail
+    as the selective updater, enforced a second time.
     Returns the packages actually updated (empty if disabled, unconfigured, no
     match, or the update failed).
     """
@@ -59,7 +60,8 @@ def _run_auto_update(cfg: Config, registry: BackendRegistry, packages: list[Pack
     patterns = cfg.profiles.get(cfg.auto_update_profile)
     if not patterns:
         return []
-    candidates = [p for p in filter_by_profile(packages, patterns) if p.priority != "critical"]
+    candidates = [p for p in filter_by_profile(packages, patterns)
+                  if p.priority not in ("critical", "core")]
     if not candidates:
         return []
 

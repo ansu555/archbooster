@@ -1,31 +1,68 @@
 """
-Assigns a priority to each package, which also defines the two update layers:
+Assigns a priority to each package, which defines the three update layers:
 
-  critical  → the SYSTEM layer: kernel, firmware, display drivers, core libs.
+  critical  → the HOLD layer: kernel, modules, firmware, GPU drivers,
+              microcode, bootloader, X server. Never cherry-picked and never
+              upgraded on the apps-first path — always `--ignore`d, moves only
+              via a full upgrade.
+  core      → the RIDE-ALONG layer: glibc, openssl, systemd, sudo, dbus and
+              friends. Never cherry-picked either, but never held back: these
+              upgrade *with* everything else on the full `-Syu`.
   normal    → the APP layer: user-facing applications.
   optional  → the APP layer: fonts, themes, icon packs, minor utilities.
 
-ArchBooster's selective (cherry-pick) update flow only ever touches the APP
-layer. System-layer packages are never cherry-picked — updating only a subset
-of the system is a "partial upgrade", which is unsupported on a rolling release
-and can break the install. The system layer may only be updated via a full
-`pacman -Syu` (or the equivalent full upgrade on other distros). Use
-`is_system()` to test which layer a package belongs to.
+"Don't cherry-pick this" and "hold this back" are two different ideas, and
+conflating them is actively dangerous. Both the kernel block and the core libs
+are unsafe to install *alone* (`-S glibc` against a stale sync DB is a partial
+upgrade), which is why neither is ever selectable. But they part ways on the
+apps-first path:
+
+  * The kernel/driver/firmware/bootloader block is safe to hold. Nothing in
+    userspace links against a kernel soname; the block is internally coherent
+    and simply lands on the next reboot. `is_system()` marks it.
+  * glibc, openssl and systemd are the exact opposite. Every binary on the box
+    links against them, so holding them back while upgrading everything that
+    links against them is the *dangerous* direction of a partial upgrade — an
+    openssl soname bump is the canonical way to end up with a system full of
+    binaries pointing at a libcrypto.so that is no longer installed. These must
+    ride along. `rides_along()` marks them, and `Updater` strips them from the
+    `--ignore` list no matter what a caller asks for.
+
+`never_cherry_pick()` is the union — the guardrail for the `-S`-style paths.
 
 Package *names* mean different things per distro, so each backend has its own
 base pattern lists below (Arch/pacman, Debian/apt, Fedora/dnf). `classify()` /
 `is_system()` default to the Arch lists for backward compatibility, but accept
-`base_critical`/`base_optional` overrides — `categorize()` picks the right pair
-per `Package.source` automatically via `SOURCE_BASE_PATTERNS`, so a mixed-source
-scan (e.g. pacman + apt) classifies each package against its own distro's list.
+`base_critical`/`base_core`/`base_optional` overrides — `categorize()` picks the
+right set per `Package.source` automatically via `SOURCE_BASE_PATTERNS`, so a
+mixed-source scan (e.g. pacman + apt) classifies each package against its own
+distro's list.
 """
 from archbooster.core.scanner import Package
 
+# The HOLD layer. Deliberately mirrors `Updater.SYSTEM_HOLD_GLOBS`: kernel,
+# modules, firmware, GPU, microcode, bootloader — and nothing else. Every entry
+# here is something that can be held back without stranding the rest of the
+# system against a soname that no longer exists.
+#
+# xorg-server is in the block (not with the `xorg-*` client utilities below)
+# because it shares a driver ABI with mesa / nvidia-utils / xf86-video-*, which
+# are held here too. Upgrading the X server while its video driver stays pinned
+# is how X stops starting, so the pair moves together.
 CRITICAL_PATTERNS = [
     "linux", "linux-lts", "linux-zen", "linux-hardened",
-    "linux-firmware", "mesa", "nvidia", "amdgpu", "intel-ucode",
-    "xorg", "wayland", "systemd", "glibc", "openssl", "sudo",
-    "grub", "efibootmgr", "networkmanager",
+    "linux-firmware", "mesa", "nvidia", "amdgpu", "intel-ucode", "amd-ucode",
+    "xorg-server", "xf86-video",
+    "grub", "efibootmgr", "refind", "systemd-boot",
+]
+
+# The RIDE-ALONG layer: the ABI providers. Not selectable (you never cherry-pick
+# libc), but never held either — they upgrade with everything else or the
+# upgrade isn't coherent. Checked *after* CRITICAL_PATTERNS, so "systemd-boot"
+# lands in the hold block above while "systemd" and "systemd-libs" land here.
+ALWAYS_UPGRADE_PATTERNS = [
+    "glibc", "gcc-libs", "openssl", "systemd", "dbus", "pam",
+    "sudo", "networkmanager", "wayland", "xorg",
 ]
 
 OPTIONAL_PATTERNS = [
@@ -38,9 +75,14 @@ OPTIONAL_PATTERNS = [
 # "linux-image-*" instead of "linux", "libc6" instead of "glibc").
 APT_CRITICAL_PATTERNS = [
     "linux-image", "linux-headers", "linux-firmware", "linux-modules",
-    "systemd", "libc6", "mesa", "xserver-xorg", "xorg",
+    "mesa", "xserver-xorg",
     "nvidia-driver", "nvidia-dkms", "nvidia-kernel", "amdgpu",
-    "grub-pc", "grub-efi", "grub-common", "network-manager", "dbus",
+    "grub-pc", "grub-efi", "grub-common",
+]
+
+APT_ALWAYS_UPGRADE_PATTERNS = [
+    "libc6", "libgcc", "libssl", "openssl", "systemd", "dbus", "libpam",
+    "sudo", "network-manager", "libwayland", "xorg",
 ]
 
 APT_OPTIONAL_PATTERNS = [
@@ -51,9 +93,14 @@ APT_OPTIONAL_PATTERNS = [
 # Fedora/RHEL (dnf) — kernel/system package names again differ from Arch.
 DNF_CRITICAL_PATTERNS = [
     "kernel", "kernel-core", "kernel-modules", "kernel-devel",
-    "systemd", "glibc", "mesa", "xorg-x11-server",
+    "linux-firmware", "mesa", "xorg-x11-server",
     "nvidia-driver", "akmod-nvidia", "kmod-nvidia", "amdgpu",
-    "grub2", "networkmanager", "dbus",
+    "grub2", "shim", "microcode_ctl",
+]
+
+DNF_ALWAYS_UPGRADE_PATTERNS = [
+    "glibc", "libgcc", "openssl", "systemd", "dbus", "pam",
+    "sudo", "networkmanager", "wayland", "xorg-x11-",
 ]
 
 DNF_OPTIONAL_PATTERNS = [
@@ -71,14 +118,14 @@ DNF_OPTIONAL_PATTERNS = [
 # matters for flat package-name backends in particular: a Homebrew formula is
 # commonly named e.g. "openssl", which collides with an Arch CRITICAL_PATTERNS
 # entry and would otherwise get wrongly flagged critical.
-SOURCE_BASE_PATTERNS: dict[str, tuple[list[str], list[str]]] = {
-    "official": (CRITICAL_PATTERNS, OPTIONAL_PATTERNS),
-    "AUR":      (CRITICAL_PATTERNS, OPTIONAL_PATTERNS),
-    "apt":      (APT_CRITICAL_PATTERNS, APT_OPTIONAL_PATTERNS),
-    "dnf":      (DNF_CRITICAL_PATTERNS, DNF_OPTIONAL_PATTERNS),
-    "Flatpak":  ([], OPTIONAL_PATTERNS),
-    "snap":     ([], OPTIONAL_PATTERNS),
-    "brew":     ([], OPTIONAL_PATTERNS),
+SOURCE_BASE_PATTERNS: dict[str, tuple[list[str], list[str], list[str]]] = {
+    "official": (CRITICAL_PATTERNS, ALWAYS_UPGRADE_PATTERNS, OPTIONAL_PATTERNS),
+    "AUR":      (CRITICAL_PATTERNS, ALWAYS_UPGRADE_PATTERNS, OPTIONAL_PATTERNS),
+    "apt":      (APT_CRITICAL_PATTERNS, APT_ALWAYS_UPGRADE_PATTERNS, APT_OPTIONAL_PATTERNS),
+    "dnf":      (DNF_CRITICAL_PATTERNS, DNF_ALWAYS_UPGRADE_PATTERNS, DNF_OPTIONAL_PATTERNS),
+    "Flatpak":  ([], [], OPTIONAL_PATTERNS),
+    "snap":     ([], [], OPTIONAL_PATTERNS),
+    "brew":     ([], [], OPTIONAL_PATTERNS),
 }
 
 
@@ -121,6 +168,11 @@ def display_category(pkg: Package, gui_packages: frozenset[str] | set[str] = fro
         if any(nl == p or nl.startswith(p) for p in KERNEL_CATEGORY_PATTERNS):
             return "kernel"
         return "system"
+    if pkg.priority == "core":
+        # Same "system" bucket for filtering purposes — a user looking for
+        # glibc looks under system. The held/rides-along distinction is carried
+        # by priority, and shown per-row by the dashboard.
+        return "system"
     if pkg.priority == "optional":
         return "fonts-themes"
     if pkg.source in APP_ONLY_SOURCES or pkg.name in gui_packages:
@@ -134,19 +186,26 @@ def classify(
     extra_optional: list[str] | None = None,
     base_critical: list[str] = CRITICAL_PATTERNS,
     base_optional: list[str] = OPTIONAL_PATTERNS,
+    base_core: list[str] = ALWAYS_UPGRADE_PATTERNS,
 ) -> str:
-    """Return "critical" | "normal" | "optional" for a package name.
+    """Return "critical" | "core" | "normal" | "optional" for a package name.
 
     `extra_critical` / `extra_optional` are user-configured name prefixes from
-    config.toml that extend the built-in lists. `base_critical`/`base_optional`
-    let a non-Arch backend (apt, dnf) classify against its own distro's system
-    package names instead of Arch's; they default to the Arch lists.
+    config.toml that extend the built-in lists. `base_critical`/`base_core`/
+    `base_optional` let a non-Arch backend (apt, dnf) classify against its own
+    distro's package names instead of Arch's; they default to the Arch lists.
+
+    Order matters: the hold block is tested before the ride-along block, so a
+    more specific hold entry ("systemd-boot", "xorg-server") wins over the
+    broader ride-along prefix it sits under ("systemd", "xorg").
     """
     nl = name.lower()
     critical = list(base_critical) + [p.lower() for p in (extra_critical or [])]
     optional = list(base_optional) + [p.lower() for p in (extra_optional or [])]
     if any(nl == p or nl.startswith(p) for p in critical):
         return "critical"
+    if any(nl == p or nl.startswith(p) for p in base_core):
+        return "core"
     if any(nl.startswith(p) or p in nl for p in optional):
         return "optional"
     return "normal"
@@ -157,13 +216,50 @@ def is_system(
     extra_critical: list[str] | None = None,
     base_critical: list[str] = CRITICAL_PATTERNS,
 ) -> bool:
-    """True if `name` is a SYSTEM-layer package that must never be cherry-picked.
+    """True if `name` is a HOLD-layer package: kernel, modules, firmware, GPU
+    driver, microcode, bootloader, X server.
 
-    This is the guardrail: each backend's selective updater consults it (with
-    its own `base_critical` list) so a partial upgrade of the system/drivers
-    can't happen by accident, on any distro.
+    These are held back (`--ignore`) on the apps-first path and only move via a
+    full upgrade. This is deliberately *not* "is it important" — glibc is more
+    important than the bootloader and is emphatically not in here, because
+    holding glibc back is the dangerous move, not the safe one. See
+    `rides_along()`.
     """
     return classify(name, extra_critical=extra_critical, base_critical=base_critical) == "critical"
+
+
+def rides_along(
+    name: str,
+    base_core: list[str] = ALWAYS_UPGRADE_PATTERNS,
+    base_critical: list[str] = CRITICAL_PATTERNS,
+) -> bool:
+    """True if `name` is a RIDE-ALONG package that must never be held back.
+
+    glibc, openssl, systemd and friends: everything on the box links against
+    them, so they have to advance in the same transaction as the packages that
+    link against them. `Updater` strips these from `--ignore` unconditionally,
+    which is what keeps an under-reporting scan or an over-eager caller from
+    turning the apps-first update into an openssl-pinned partial upgrade.
+    """
+    return classify(name, base_critical=base_critical, base_core=base_core) == "core"
+
+
+def never_cherry_pick(
+    name: str,
+    extra_critical: list[str] | None = None,
+    base_critical: list[str] = CRITICAL_PATTERNS,
+    base_core: list[str] = ALWAYS_UPGRADE_PATTERNS,
+) -> bool:
+    """True if `name` must never be installed on its own (`-S <name>`).
+
+    The union of the two non-app layers. They're excluded from cherry-picking
+    for opposite reasons — the kernel block because it should wait for a full
+    upgrade, the core libs because they should never lag one — but the `-S`
+    path treats them the same: not alone.
+    """
+    priority = classify(name, extra_critical=extra_critical,
+                        base_critical=base_critical, base_core=base_core)
+    return priority in ("critical", "core")
 
 
 def categorize(
@@ -182,12 +278,13 @@ def categorize(
     """
     gui = gui_packages or frozenset()
     for pkg in packages:
-        base_critical, base_optional = SOURCE_BASE_PATTERNS.get(
-            pkg.source, (CRITICAL_PATTERNS, OPTIONAL_PATTERNS)
+        base_critical, base_core, base_optional = SOURCE_BASE_PATTERNS.get(
+            pkg.source, (CRITICAL_PATTERNS, ALWAYS_UPGRADE_PATTERNS, OPTIONAL_PATTERNS)
         )
         pkg.priority = classify(
             pkg.name, extra_critical, extra_optional,
             base_critical=base_critical, base_optional=base_optional,
+            base_core=base_core,
         )
         pkg.category = display_category(pkg, gui)
     return packages

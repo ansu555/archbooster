@@ -52,13 +52,21 @@ they're installed.
 **One command that never touches the system layer.** `archbooster --update`
 (or `Enter` in the TUI) updates your apps and the libraries they need, while the
 kernel, drivers, firmware and bootloader are always held back through pacman's
-own `--ignore` mechanism. Moving the system layer takes an explicit full
-upgrade, with a snapshot taken first.
+own `--ignore` mechanism. Core libraries (`glibc`, `openssl`, `systemd`) are
+never in that hold list — they upgrade with everything else, because holding
+them back is what actually breaks an Arch install. Moving the held system layer
+takes an explicit full upgrade, with a snapshot taken first.
 
-**A guardrail, not just a filter.** ArchBooster knows the difference between an
-app (Firefox, a Flatpak, an AUR `-bin` package) and the system (kernel,
-mesa/nvidia drivers, glibc, systemd). System packages can never be
-cherry-picked — they only ever move together, via a full `-Syu`.
+**A guardrail, not just a filter.** ArchBooster separates two things that are
+easy to confuse: *never cherry-pick this* and *hold this back*. The kernel,
+drivers, firmware and bootloader are held — nothing in userspace links against
+a kernel soname, so the block moves together on an explicit full upgrade. The
+core ABI libraries are the opposite case: `glibc`, `openssl` and `systemd` are
+what every binary on the box is linked *against*, so they always ride along with
+the update rather than being pinned underneath it. Holding `openssl` back while
+upgrading everything that links to `libcrypto` is the textbook partial upgrade,
+and `--ignore=glibc` is worse; neither can happen here. Both layers are still
+un-cherry-pickable: you cannot `-S glibc` from ArchBooster either.
 
 **Context around the list.** Packages are sorted into plain vocabulary — Apps,
 CLI and libraries, Drivers and firmware, Kernel, Core system, Fonts and themes —
@@ -84,11 +92,15 @@ gives you.
 
 **Apps-first updating**
 - `archbooster --update` / `Enter` updates the app layer via
-  `-Syu --ignore=<system packages>` — a coherent sync where libraries ride
-  along, but kernel, drivers, firmware and bootloader are always held back
-- Critical / Normal / Optional categorization with configurable overrides and
-  distro-specific system-package lists for apt and dnf
-- Select individual packages — never forced, system packages always held
+  `-Syu --ignore=<held>` — a coherent sync where libraries ride along, but
+  kernel, drivers, firmware and bootloader are always held back
+- Four layers: **Critical** (kernel/driver block — always held), **Core**
+  (`glibc`, `openssl`, `systemd` — never held, never cherry-picked), **Normal**
+  and **Optional** — with configurable overrides and distro-specific lists for
+  apt and dnf
+- Select individual packages — never forced. The two non-app layers aren't
+  selectable in either direction: you can't cherry-pick them, and you can't
+  pin the core libs underneath an upgrade
 - Live streaming output during the update (real pacman/yay/flatpak/apt/dnf
   output, not a spinner)
 
@@ -258,7 +270,7 @@ archbooster/
 ├── daemon.py                   # Background check loop (systemd) + notify
 ├── core/
 │   ├── scanner.py              # Package dataclass + line parsing
-│   ├── categorizer.py          # critical / normal / optional + guardrail
+│   ├── categorizer.py          # critical / core / normal / optional + guardrails
 │   │                           #   (per-distro pattern lists: Arch/apt/dnf)
 │   ├── updater.py              # runs yay/pacman, streams output
 │   ├── procutil.py             # shared subprocess-streaming helper

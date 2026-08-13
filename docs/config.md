@@ -16,11 +16,25 @@ defaults below on first run (`archbooster/core/config.py`).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `extra_critical` | `[]` | Extra package name prefixes to force into the "critical" (system-layer, guardrail-locked) category, on top of the built-in list (kernel, mesa, nvidia, glibc, systemd, ...). |
+| `extra_critical` | `[]` | Extra package name prefixes to force into the "critical" **hold** layer (kernel, mesa, nvidia, microcode, bootloader, X server) — held back by `--update`, moved only by a full upgrade. |
 | `extra_optional` | `[]` | Extra package name prefixes to force into "optional" (fonts, themes, ...), on top of the built-in list. |
 
 Both are matched with the same rule as the built-ins: exact match or
 `name.startswith(prefix)`. Anything not matched by either list is "normal".
+
+There are four priorities, and two of them are not user-selectable for opposite
+reasons:
+
+| Priority | Built-in members | `--update` behaviour |
+|---|---|---|
+| `critical` | kernel, modules, firmware, mesa/nvidia, microcode, bootloader, `xorg-server` | **Always held** (`--ignore`). Full upgrade only. |
+| `core` | `glibc`, `gcc-libs`, `openssl`, `systemd`, `dbus`, `pam`, `sudo`, `networkmanager`, `wayland`, `xorg-*` | **Never held.** Upgraded with your apps. |
+| `normal` / `optional` | everything else | Freely selectable. |
+
+`extra_critical` only widens the *hold* layer. Do not use it to protect a core
+library: adding `openssl` there would pin `libcrypto` while everything linked
+against it upgrades, which is precisely the partial upgrade the layer split
+exists to prevent. The `core` list is not user-extensible for that reason.
 
 ## `[ignore]`
 
@@ -75,26 +89,33 @@ profile clears the filter back to "everything selected".
 | `auto_update` | `false` | If true, the background daemon non-interactively updates packages matching `auto_update_profile` on every scan — opt-in, off by default. |
 | `auto_update_profile` | `""` | Name of a `[profiles]` entry to auto-update. Ignored if empty or `auto_update` is false. |
 
-System/critical packages are **never** auto-updated, even if a profile's
-patterns would technically match one (e.g. a `"*"` catch-all profile) — the
-daemon enforces the app/system guardrail a second time on this path since it
-runs unattended. Every auto-update run is logged to history, and mentioned by
+Neither non-app layer is **ever** auto-updated, even if a profile's patterns
+would technically match one (e.g. a `"*"` catch-all profile) — the daemon
+enforces the guardrail a second time on this path since it runs unattended, and
+it cherry-picks by name, which is not a safe way to move `glibc` either. Every auto-update run is logged to history, and mentioned by
 name in the desktop notification, so it's never silent.
 
 ## Notes
 
-- `extra_critical` entries are the only user-facing way to widen the
-  app-vs-system guardrail (`categorizer.is_system`) — add a prefix there if a
-  package you consider system-critical isn't caught by the built-in list.
-- apt and dnf get their own built-in critical-package lists
-  (`categorizer.APT_CRITICAL_PATTERNS` / `DNF_CRITICAL_PATTERNS`), since
-  Debian/Fedora package names don't match Arch's (`linux-image-*` vs
-  `linux`, `libc6` vs `glibc`, ...). `extra_critical` extends whichever list
-  applies to a given package's backend.
+- `extra_critical` entries are the only user-facing way to widen the hold
+  layer (`categorizer.is_system`) — add a prefix there if a package you want
+  held until a full upgrade isn't caught by the built-in list. It is the right
+  tool for an out-of-tree kernel module or a second bootloader, and the wrong
+  tool for a shared library.
+- The hold layer is checked before the core layer, so a specific hold entry
+  beats the broader ride-along prefix it sits under: `systemd-boot` is held
+  even though `systemd` rides along, and `xorg-server` is held (it shares a
+  driver ABI with the held `mesa`/`nvidia`/`xf86-video-*`) even though the
+  `xorg-*` client utilities ride along.
+- apt and dnf get their own built-in lists for both layers
+  (`categorizer.APT_CRITICAL_PATTERNS` / `APT_ALWAYS_UPGRADE_PATTERNS` and the
+  `DNF_` equivalents), since Debian/Fedora package names don't match Arch's
+  (`linux-image-*` vs `linux`, `libc6` vs `glibc`, ...). `extra_critical`
+  extends whichever hold list applies to a given package's backend.
 - Flatpak, Snap, and Homebrew have no system layer at all, so packages from
-  those backends never classify as "critical" regardless of name — this
-  matters in practice for Homebrew, whose flat formula names (e.g.
-  `openssl`) can otherwise collide with an Arch-shaped critical pattern.
+  those backends never classify as "critical" or "core" regardless of name —
+  this matters in practice for Homebrew, whose flat formula names (e.g.
+  `openssl`) can otherwise collide with an Arch-shaped pattern.
 - Backend-specific settings (e.g. per-Flatpak-remote config) don't exist yet;
   Flatpak updates are driven entirely by whatever remotes `flatpak` itself
   already has configured.

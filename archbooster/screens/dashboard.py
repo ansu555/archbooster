@@ -34,9 +34,16 @@ from archbooster.core.scanner import Package
 
 PRIORITY_COLOR = {
     "critical": "red",
+    # Core ABI libs are locked like the system layer but for the opposite
+    # reason — they always upgrade — so they read as blue, not red.
+    "core":     "blue",
     "normal":   "yellow",
     "optional": "green",
 }
+
+# Priorities the user cannot select: the hold layer (never upgraded here) and
+# the core layer (always upgraded here). Neither is a choice.
+LOCKED_PRIORITIES = ("critical", "core")
 
 # Display order for source groups — mirrors how a mixed system is actually
 # laid out: pacman's two layers first, then app-only backends like Flatpak,
@@ -83,9 +90,11 @@ class PackageRow(Static):
                  locked: bool = False) -> None:
         super().__init__()
         self.pkg = pkg
-        # A locked row is a system-layer package. It can never be selected for
-        # the apps-first update — it is always held back (`--ignore`) and only
-        # moves via a full upgrade [F].
+        # A locked row is one the user doesn't get to choose, for one of two
+        # opposite reasons: a "critical" row is the kernel/driver block, always
+        # held back (`--ignore`) and only moved by a full upgrade [F]; a "core"
+        # row is glibc/openssl/systemd, always upgraded with the apps because
+        # holding it back is what breaks the system.
         self.locked = locked
         self._selected = selected and not locked
         if locked:
@@ -101,7 +110,9 @@ class PackageRow(Static):
         name = f"[{color}]●[/{color}] {self.pkg.name}"
         if self.pkg.category:
             name += f"  [dim]({CATEGORY_LABELS.get(self.pkg.category, self.pkg.category)})[/dim]"
-        if self.locked:
+        if self.pkg.priority == "core":
+            name += "  [dim](core lib · always upgrades)[/dim]"
+        elif self.locked:
             name += "  [dim](held · Full upgrade only)[/dim]"
         yield Label(name, classes="row-name")
         yield Label(f"{self.pkg.current[:13]} → {self.pkg.new[:13]}", classes="row-version")
@@ -161,11 +172,14 @@ class SummaryBar(Static):
     def update_counts(self, packages: list, uptodate: int = 0,
                       filter_desc: str = "") -> None:
         critical = sum(1 for p in packages if p.priority == "critical")
+        core     = sum(1 for p in packages if p.priority == "core")
         normal   = sum(1 for p in packages if p.priority == "normal")
         optional = sum(1 for p in packages if p.priority == "optional")
         parts = []
         if normal:   parts.append(f"[yellow]● {normal} app[/yellow]")
         if optional: parts.append(f"[green]● {optional} optional[/green]")
+        if core:
+            parts.append(f"[blue]● {core} core lib[/blue] [dim](always upgraded)[/dim]")
         if critical:
             parts.append(f"[red]● {critical} system held[/red] [dim](press F for full upgrade)[/dim]")
         if not parts:
@@ -350,7 +364,7 @@ class DashboardScreen(Screen):
         # Group by source (Official / AUR / Flatpak) so a mixed system reads
         # as one unified list; within each group, app layer first (actionable),
         # system layer last (held / full-upgrade only).
-        order = {"normal": 0, "optional": 1, "critical": 2}
+        order = {"normal": 0, "optional": 1, "core": 2, "critical": 3}
         packages.sort(
             key=lambda p: (SOURCE_ORDER.get(p.source, 99), order[p.priority], p.name)
         )
@@ -360,7 +374,7 @@ class DashboardScreen(Screen):
         # Default selection: the whole safe (non-system) layer — one [ENTER]
         # is the one command. [U] narrows it to user-facing apps only.
         self._selected = {
-            (p.source, p.name) for p in packages if p.priority != "critical"
+            (p.source, p.name) for p in packages if p.priority not in LOCKED_PRIORITIES
         }
         self._render_list()
         self._notify_advisories()
@@ -418,7 +432,7 @@ class DashboardScreen(Screen):
             if pkg.source != last_source:
                 pkg_list.mount(SourceHeader(pkg.source))
                 last_source = pkg.source
-            locked = pkg.priority == "critical"
+            locked = pkg.priority in LOCKED_PRIORITIES
             pkg_list.mount(PackageRow(
                 pkg,
                 selected=(pkg.source, pkg.name) in self._selected,
@@ -506,7 +520,7 @@ class DashboardScreen(Screen):
         to all pending updates, not just the currently visible (filtered) rows."""
         self._selected = {
             (p.source, p.name) for p in self._packages
-            if p.priority != "critical" and p.category == "apps"
+            if p.priority == "normal" and p.category == "apps"
         }
         for row in self._rows():
             row.select((row.pkg.source, row.pkg.name) in self._selected)
@@ -561,7 +575,7 @@ class DashboardScreen(Screen):
         # only ever be an app-layer, hold-the-system update.
         selected = [
             p for p in self._packages
-            if (p.source, p.name) in self._selected and p.priority != "critical"
+            if (p.source, p.name) in self._selected and p.priority not in LOCKED_PRIORITIES
         ]
         if not selected:
             self.notify("No app packages selected!", severity="warning")
@@ -584,7 +598,7 @@ class DashboardScreen(Screen):
         if self._active_profile_idx >= len(names):
             self._active_profile_idx = -1
             self._selected = {
-                (p.source, p.name) for p in self._packages if p.priority != "critical"
+                (p.source, p.name) for p in self._packages if p.priority not in LOCKED_PRIORITIES
             }
             self.notify("Profile filter cleared — all apps selected", severity="information")
         else:
@@ -592,7 +606,7 @@ class DashboardScreen(Screen):
             patterns = self._profile_patterns[name]
             self._selected = {
                 (p.source, p.name) for p in self._packages
-                if p.priority != "critical" and matches_profile(p.name, patterns)
+                if p.priority == "normal" and matches_profile(p.name, patterns)
             }
             self.notify(f"Profile: {name}", severity="information")
         for row in self._rows():
@@ -619,7 +633,7 @@ class DashboardScreen(Screen):
     def _refresh_status(self) -> None:
         # Counter over the whole app layer (not just visible rows), since the
         # selection set is global across filters.
-        selectable = [p for p in self._packages if p.priority != "critical"]
+        selectable = [p for p in self._packages if p.priority not in LOCKED_PRIORITIES]
         selected   = sum(
             1 for p in selectable if (p.source, p.name) in self._selected
         )
